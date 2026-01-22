@@ -46,8 +46,8 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "app_database"
                 )
-                .addCallback(DatabaseCallback())
-                .build()
+                    .addCallback(DatabaseCallback())
+                    .build()
                 INSTANCE = instance
                 instance
             }
@@ -63,20 +63,9 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
-            suspend fun prepopulateDatabase(sitioDao: SitioDao) {
-                val sitios = listOf(
-                    Sitio("SPS06CL5436", "ACEYDESA_COLON", "TOCOA", "NORMAL", "NORMAL", 1),
-                    Sitio("GLS", "AEROPUERTO_GOLOSON", "CBA1", "UVIP", "UVIP", 1),
-                    Sitio("SPS04IS5804", "AEROPUERTO_ROATAN", "ROATAN", "UVIP", "NORMAL", 1),
-                    Sitio("SPS06CL5435", "AGROPALMA_COLON_MICRO", "TOCOA", "NORMAL", "NORMAL", 1),
-                    Sitio("SPS06CL5437", "AGUA_AMARILLA", "COROCITO", "HUB", "NORMAL", 1),
-                    Sitio("SPS06GD5901", "AHUAS_GD", "GAD", "HUB", "UVIP", 1),
-                    Sitio("SPS06AT5307", "ALDEA_EL_NARANJAL_ATLANTIDA", "CBA1", "NORMAL", "REGULAR", 1),
-                    Sitio("SPS06CL5472", "ALDEA_EL_REMOLINO", "TOCOA", "NORMAL", "NORMAL", 1),
-                    Sitio("SPS06CB5015", "ALTIPLANO", "CBA2", "NORMAL", "NORMAL", 1),
-                    Sitio("SPS06YO5732", "ARENAL", "SABA", "NORMAL", "NORMAL", 1)
-                )
-                sitios.forEach { sitioDao.insert(it) }
+            private suspend fun prepopulateDatabase(sitioDao: SitioDao) {
+                // Aquí puedes agregar los sitios iniciales que desees
+
             }
         }
     }
