@@ -6,9 +6,7 @@ plugins {
 
 android {
     namespace = "com.example.pruebaderoom"
-    compileSdk {
-        version = release(36)
-    }
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "com.example.pruebaderoom"
@@ -47,7 +45,13 @@ dependencies {
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
     androidTestImplementation(libs.androidx.espresso.core)
+    
+    // Room
     implementation("androidx.room:room-runtime:2.8.4")
     kapt("androidx.room:room-compiler:2.8.4")
     implementation("androidx.room:room-ktx:2.8.4")
+    
+    // Retrofit
+    implementation(libs.retrofit)
+    implementation(libs.retrofit.gson)
 }

@@ -16,4 +16,7 @@ interface SitioDao {
 
     @Query("SELECT * FROM Sitio WHERE id_sitio = :id")
     suspend fun getById(id: String): Sitio?
+
+    @Query("DELETE FROM Sitio")
+    suspend fun deleteAll()
 }
