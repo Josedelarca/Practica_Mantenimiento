@@ -23,7 +23,8 @@ import kotlinx.coroutines.launch
         Respuesta::class,
         Imagen::class
     ],
-    version = 1
+    version = 2, // SUBIMOS LA VERSIÓN DE 1 A 2
+    exportSchema = false
 )
 @TypeConverters(Converters::class)
 abstract class AppDatabase : RoomDatabase() {
@@ -46,6 +47,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "app_database"
                 )
+                    .fallbackToDestructiveMigration() // ESTO EVITA QUE LA APP SE CIERRE SI HAY CAMBIOS
                     .addCallback(DatabaseCallback())
                     .build()
                 INSTANCE = instance
@@ -56,16 +58,6 @@ abstract class AppDatabase : RoomDatabase() {
         private class DatabaseCallback : RoomDatabase.Callback() {
             override fun onCreate(db: SupportSQLiteDatabase) {
                 super.onCreate(db)
-                INSTANCE?.let { database ->
-                    CoroutineScope(Dispatchers.IO).launch {
-                        prepopulateDatabase(database.sitioDao())
-                    }
-                }
-            }
-
-            private suspend fun prepopulateDatabase(sitioDao: SitioDao) {
-                // Aquí puedes agregar los sitios iniciales que desees
-
             }
         }
     }

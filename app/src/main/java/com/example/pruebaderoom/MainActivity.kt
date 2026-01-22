@@ -1,8 +1,10 @@
 package com.example.pruebaderoom
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.AutoCompleteTextView
@@ -27,11 +29,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var db: AppDatabase
     private lateinit var txtInfo: TextView
     private lateinit var autoCompleteSitios: AutoCompleteTextView
+    private lateinit var btnVerMapa: Button
     private var listaSitios: List<Sitio> = emptyList()
+    private var sitioSeleccionado: Sitio? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
-        
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
@@ -43,29 +46,41 @@ class MainActivity : AppCompatActivity() {
         }
 
         db = AppDatabase.getDatabase(this)
-        
         txtInfo = findViewById(R.id.txtInfo)
         autoCompleteSitios = findViewById(R.id.autoCompleteCiudades)
+        btnVerMapa = findViewById(R.id.btnVerMapa)
         val btnpasar = findViewById<Button>(R.id.btnpasar)
 
-        // 1. CARGA INICIAL: Mostramos lo que ya existe en la base de datos local
         actualizarInterfaz()
-
-        // 2. SINCRONIZACIÓN: Buscamos nuevos datos en la API
         sincronizarSitios()
 
         autoCompleteSitios.onItemClickListener = AdapterView.OnItemClickListener { parent, _, position, _ ->
             val nombreSeleccionado = parent.getItemAtPosition(position) as String
-            val sitioEncontrado = listaSitios.find { it.nombre == nombreSeleccionado }
+            sitioSeleccionado = listaSitios.find { it.nombre == nombreSeleccionado }
             
-            sitioEncontrado?.let {
+            sitioSeleccionado?.let {
                 txtInfo.text = """
                     ID SITIO: ${it.idSitio}
                     NOMBRE: ${it.nombre}
-                    TEEM: ${it.teem}
-                    MORFOLOGÍA: ${it.siteMorfology}
-                    NUEVA MORFOLOGÍA: ${it.newMorfology}
+                    TEAM: ${it.teem}
+                    VISITAS: ${it.visit}
                 """.trimIndent()
+                
+                btnVerMapa.visibility = View.VISIBLE
+            }
+        }
+
+        btnVerMapa.setOnClickListener {
+            sitioSeleccionado?.let { sitio ->
+                try {
+                    // Usamos latitude y longitude (nombres correctos en tu entidad Sitio)
+                    val uri = Uri.parse("geo:${sitio.latitud},${sitio.longitud}?q=${sitio.latitud},${sitio.longitud}(${sitio.nombre})")
+                    val intent = Intent(Intent.ACTION_VIEW, uri)
+                    intent.setPackage("com.google.android.apps.maps")
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    Toast.makeText(this, "Google Maps no está instalado", Toast.LENGTH_SHORT).show()
+                }
             }
         }
 
@@ -78,49 +93,31 @@ class MainActivity : AppCompatActivity() {
     private fun sincronizarSitios() {
         lifecycleScope.launch {
             try {
-                // Llamada a la API
                 val response = withContext(Dispatchers.IO) {
                     RetrofitClient.instance.getSitios()
                 }
-                
                 val sitiosApi = response.data
-                
                 if (sitiosApi.isNotEmpty()) {
                     withContext(Dispatchers.IO) {
                         val sitioDao = db.sitioDao()
-                        // Actualizamos la base de datos local con los datos de la API
                         sitioDao.deleteAll()
-                        sitiosApi.forEach { sitio ->
-                            sitioDao.insert(sitio)
-                        }
+                        sitiosApi.forEach { sitioDao.insert(it) }
                     }
-                    Log.d("API_SYNC", "Sincronización exitosa")
-                    // Volvemos a actualizar la interfaz con los nuevos datos recibidos
                     actualizarInterfaz()
                 }
             } catch (e: Exception) {
-                Log.e("API_SYNC", "No se pudo sincronizar, usando datos locales: ${e.message}")
+                Log.e("API_SYNC", "Error al sincronizar: ${e.message}")
             }
         }
     }
 
     private fun actualizarInterfaz() {
         lifecycleScope.launch {
-            // Obtenemos los sitios directamente de Room
-            val sitiosLocal = withContext(Dispatchers.IO) {
-                db.sitioDao().getAll()
-            }
+            val sitiosLocal = withContext(Dispatchers.IO) { db.sitioDao().getAll() }
             listaSitios = sitiosLocal
-
             val nombres = listaSitios.map { it.nombre }
             val adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_dropdown_item_1line, nombres)
             autoCompleteSitios.setAdapter(adapter)
-            autoCompleteSitios.threshold = 1
-            
-            // Si la lista local está vacía, mostramos un aviso
-            if (listaSitios.isEmpty()) {
-                Log.d("UI_UPDATE", "La base de datos local está vacía.")
-            }
         }
     }
 }

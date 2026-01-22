@@ -1,0 +1,8 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. Usamos .Light en lugar de .DayNight -->
+    <style name="Base.Theme.Pruebaderoom" parent="Theme.Material3.Light.NoActionBar">
+        <!-- Customize your light theme here. -->
+    </style>
+
+    <style name="Theme.Pruebaderoom" parent="Base.Theme.Pruebaderoom" />
+</resources>
