@@ -12,6 +12,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.app.AppCompatDelegate
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -24,20 +25,24 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+/**
+ * Esta pantalla muestra la lista de tareas.
+ * La hemos simplificado para que solo muestre el mínimo de fotos necesarias.
+ */
 class InspeccionActivity : AppCompatActivity() {
 
     private lateinit var db: AppDatabase
     private lateinit var rvPreguntas: RecyclerView
     private lateinit var txtTituloFormulario: TextView
-    private lateinit var btnVolverInicio: ImageButton
+    private var btnVolver: ImageButton? = null
 
-    // Clase sellada para representar los dos tipos de filas en nuestra lista
     sealed class InspeccionItem {
-        data class SeccionHeader(val seccion: Seccion) : InspeccionItem() // Fila de Título de Sección
-        data class PreguntaItem(val pregunta: Pregunta) : InspeccionItem() // Fila de Pregunta individual
+        data class SeccionHeader(val seccion: Seccion) : InspeccionItem()
+        data class PreguntaItem(val pregunta: Pregunta) : InspeccionItem()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContentView(R.layout.activity_inspeccion)
@@ -45,126 +50,80 @@ class InspeccionActivity : AppCompatActivity() {
         db = AppDatabase.getDatabase(this)
         txtTituloFormulario = findViewById(R.id.txtTituloFormulario)
         rvPreguntas = findViewById(R.id.rvPreguntas)
-        btnVolverInicio = findViewById(R.id.btnVolverInicio)
+        btnVolver = findViewById(R.id.btnVolverInicio)
         
         rvPreguntas.layoutManager = LinearLayoutManager(this)
+        btnVolver?.setOnClickListener { finish() }
 
-        // Acción para regresar a la pantalla principal
-        btnVolverInicio.setOnClickListener {
-            finish()
-        }
-
-        // Cargamos los datos del formulario 1
+        cargarYMostrar()
         sincronizarFormulario(1L)
     }
 
-    private fun sincronizarFormulario(idFormulario: Long) {
+    private fun sincronizarFormulario(id: Long) {
         lifecycleScope.launch {
             try {
-                // Descargamos el formulario detallado de la API
-                val response = withContext(Dispatchers.IO) {
-                    RetrofitClient.instance.getFormularioCompleto(idFormulario)
-                }
-
+                val response = withContext(Dispatchers.IO) { RetrofitClient.instance.getFormularioCompleto(id) }
                 if (response.success) {
-                    val data = response.data
-                    txtTituloFormulario.text = data.nombre
-
-                    // Guardamos todo en Room (Formulario, Secciones y Preguntas)
                     withContext(Dispatchers.IO) {
+                        val data = response.data
                         db.formularioDao().insert(Formulario(data.id, data.nombre, data.descripcion))
-                        data.secciones.forEach { secApi ->
-                            // Insertamos la sección
-                            db.seccionDao().insert(Seccion(secApi.id, data.id, secApi.nombre))
-                            
-                            // Insertamos sus preguntas
-                            secApi.preguntas.forEach { pregApi ->
-                                db.preguntaDao().insert(Pregunta(
-                                    pregApi.id, secApi.id, pregApi.descripcion, pregApi.minImagenes, pregApi.maxImagenes
-                                ))
+                        data.secciones.forEach { s ->
+                            db.seccionDao().insert(Seccion(s.id, data.id, s.nombre))
+                            s.preguntas.forEach { p ->
+                                db.preguntaDao().insert(Pregunta(p.id, s.id, p.descripcion, p.minImagenes, p.maxImagenes))
                             }
                         }
                     }
-                    // Después de guardar, cargamos la lista combinada
-                    cargarDatosCombinados()
+                    cargarYMostrar()
                 }
             } catch (e: Exception) {
-                Log.e("INSPECCION", "Error al sincronizar: ${e.message}")
-                // Si no hay internet, cargamos lo que ya esté guardado localmente
-                cargarDatosCombinados()
+                Log.e("SYNC", "Sin conexión, mostrando datos locales.")
             }
         }
     }
 
-    // Esta función organiza las secciones y preguntas en una sola lista para el adaptador
-    private fun cargarDatosCombinados() {
+    private fun cargarYMostrar() {
         lifecycleScope.launch {
-            val items = withContext(Dispatchers.IO) {
-                val listaHibrida = mutableListOf<InspeccionItem>()
-                
-                // 1. Obtenemos todas las secciones de la base de datos
+            val hibrido = withContext(Dispatchers.IO) {
+                val list = mutableListOf<InspeccionItem>()
                 val secciones = db.seccionDao().getAll()
-                
-                secciones.forEach { seccion ->
-                    // 2. Por cada sección, agregamos una "Cabecera" a la lista
-                    listaHibrida.add(InspeccionItem.SeccionHeader(seccion))
-                    
-                    // 3. Buscamos las preguntas que pertenecen a esta sección
-                    val preguntas = db.preguntaDao().getBySeccion(seccion.idSeccion)
-                    preguntas.forEach { pregunta ->
-                        // 4. Agregamos cada pregunta debajo de su cabecera
-                        listaHibrida.add(InspeccionItem.PreguntaItem(pregunta))
-                    }
+                secciones.forEach { s ->
+                    list.add(InspeccionItem.SeccionHeader(s))
+                    val preguntas = db.preguntaDao().getBySeccion(s.idSeccion)
+                    preguntas.forEach { p -> list.add(InspeccionItem.PreguntaItem(p)) }
                 }
-                listaHibrida
+                list
             }
-            // Enviamos la lista final (Cabeceras + Preguntas) al adaptador
-            rvPreguntas.adapter = InspeccionAdapter(items)
+            rvPreguntas.adapter = InspeccionAdapter(hibrido)
+            if (hibrido.isNotEmpty()) {
+                val info = withContext(Dispatchers.IO) { db.formularioDao().getAll().firstOrNull() }
+                txtTituloFormulario.text = info?.nombre ?: "Inspección"
+            }
         }
     }
 
-    // Adaptador que maneja múltiples tipos de vista (Sección vs Pregunta)
     class InspeccionAdapter(private val items: List<InspeccionItem>) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
-
-        companion object {
-            private const val TYPE_SECTION = 0 // Identificador para Secciones
-            private const val TYPE_QUESTION = 1 // Identificador para Preguntas
-        }
-
-        // Determina qué tipo de diseño usar según el elemento en esa posición
-        override fun getItemViewType(position: Int): Int {
-            return when (items[position]) {
-                is InspeccionItem.SeccionHeader -> TYPE_SECTION
-                is InspeccionItem.PreguntaItem -> TYPE_QUESTION
-            }
-        }
-
-        // Infla el XML correcto según el tipo (item_seccion_header o item_pregunta)
+        override fun getItemViewType(position: Int) = if (items[position] is InspeccionItem.SeccionHeader) 0 else 1
+        
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
-            return if (viewType == TYPE_SECTION) {
-                val v = LayoutInflater.from(parent.context).inflate(R.layout.item_seccion_header, parent, false)
-                SeccionViewHolder(v)
+            val inflater = LayoutInflater.from(parent.context)
+            return if (viewType == 0) {
+                SeccionViewHolder(inflater.inflate(R.layout.item_seccion_header, parent, false))
             } else {
-                val v = LayoutInflater.from(parent.context).inflate(R.layout.item_pregunta, parent, false)
-                PreguntaViewHolder(v)
+                PreguntaViewHolder(inflater.inflate(R.layout.item_pregunta, parent, false))
             }
         }
 
-        // Pone los datos reales en los campos de texto
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
             val item = items[position]
-            
-            // Si la fila es una SECCIÓN
             if (holder is SeccionViewHolder && item is InspeccionItem.SeccionHeader) {
                 holder.txtNombre.text = item.seccion.nombre
-            } 
-            // Si la fila es una PREGUNTA
-            else if (holder is PreguntaViewHolder && item is InspeccionItem.PreguntaItem) {
+            } else if (holder is PreguntaViewHolder && item is InspeccionItem.PreguntaItem) {
                 holder.txtDesc.text = item.pregunta.descripcion
-                holder.txtTipo.text = "Fotos: Mín ${item.pregunta.minImagenes} / Máx ${item.pregunta.maxImagenes}"
+                // CAMBIO: Ahora solo mostramos el mínimo de fotos solicitado
+                holder.txtCant.text = "Mínimo: ${item.pregunta.minImagenes} fotos"
                 
-                // Botón para ir a tomar fotos
-                holder.btnAccion.setOnClickListener {
+                holder.btnCamara.setOnClickListener {
                     val intent = Intent(holder.itemView.context, Respuesta::class.java)
                     intent.putExtra("ID_PREGUNTA", item.pregunta.idPregunta)
                     holder.itemView.context.startActivity(intent)
@@ -174,16 +133,13 @@ class InspeccionActivity : AppCompatActivity() {
 
         override fun getItemCount() = items.size
 
-        // Sujeta la vista de la sección
         class SeccionViewHolder(v: View) : RecyclerView.ViewHolder(v) {
             val txtNombre: TextView = v.findViewById(R.id.txtSeccionNombre)
         }
-
-        // Sujeta la vista de la pregunta
         class PreguntaViewHolder(v: View) : RecyclerView.ViewHolder(v) {
             val txtDesc: TextView = v.findViewById(R.id.txtPreguntaDescripcion)
-            val txtTipo: TextView = v.findViewById(R.id.txtPreguntaTipo)
-            val btnAccion: Button = v.findViewById(R.id.btnAccionPregunta)
+            val txtCant: TextView = v.findViewById(R.id.txtPreguntaTipo)
+            val btnCamara: Button = v.findViewById(R.id.btnAccionPregunta)
         }
     }
 }

@@ -16,4 +16,7 @@ interface PreguntaDao {
 
     @Query("SELECT * FROM Preguntas WHERE id_seccion = :idSeccion")
     suspend fun getBySeccion(idSeccion: Long): List<Pregunta>
+
+    @Query("SELECT * FROM Preguntas WHERE id_pregunta = :id")
+    suspend fun getById(id: Long): Pregunta?
 }

@@ -16,4 +16,7 @@ interface SeccionDao {
 
     @Query("SELECT * FROM Seccion WHERE id_formulario = :idFormulario")
     suspend fun getByFormulario(idFormulario: Long): List<Seccion>
+
+    @Query("SELECT * FROM Seccion WHERE id_seccion = :id LIMIT 1")
+    suspend fun getById(id: Long): Seccion?
 }

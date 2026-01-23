@@ -5,13 +5,9 @@ import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.TypeConverters
-import androidx.sqlite.db.SupportSQLiteDatabase
 import com.example.pruebaderoom.data.converters.Converters
 import com.example.pruebaderoom.data.dao.*
 import com.example.pruebaderoom.data.entity.*
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 
 @Database(
     entities = [
@@ -23,7 +19,7 @@ import kotlinx.coroutines.launch
         Respuesta::class,
         Imagen::class
     ],
-    version = 2, // SUBIMOS LA VERSIÓN DE 1 A 2
+    version = 3, // Subimos a la versión 3
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -47,17 +43,10 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "app_database"
                 )
-                    .fallbackToDestructiveMigration() // ESTO EVITA QUE LA APP SE CIERRE SI HAY CAMBIOS
-                    .addCallback(DatabaseCallback())
-                    .build()
+                .fallbackToDestructiveMigration() // Importante: recrea la DB si hay cambios
+                .build()
                 INSTANCE = instance
                 instance
-            }
-        }
-
-        private class DatabaseCallback : RoomDatabase.Callback() {
-            override fun onCreate(db: SupportSQLiteDatabase) {
-                super.onCreate(db)
             }
         }
     }
