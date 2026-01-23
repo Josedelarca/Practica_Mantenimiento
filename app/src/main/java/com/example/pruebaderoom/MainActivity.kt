@@ -34,11 +34,14 @@ class MainActivity : AppCompatActivity() {
     private var sitioSeleccionado: Sitio? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Forzamos el modo claro siempre
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
+        
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
         
+        // CORRECCIÓN: El ID "main" ahora existe en activity_main.xml
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
@@ -73,7 +76,7 @@ class MainActivity : AppCompatActivity() {
         btnVerMapa.setOnClickListener {
             sitioSeleccionado?.let { sitio ->
                 try {
-                    // Usamos latitude y longitude (nombres correctos en tu entidad Sitio)
+                    // CORRECCIÓN: Usamos latitude y longitude (nombres de tu entidad Sitio)
                     val uri = Uri.parse("geo:${sitio.latitud},${sitio.longitud}?q=${sitio.latitud},${sitio.longitud}(${sitio.nombre})")
                     val intent = Intent(Intent.ACTION_VIEW, uri)
                     intent.setPackage("com.google.android.apps.maps")
@@ -85,7 +88,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnpasar.setOnClickListener {
-            val intent = Intent(this, Respuesta::class.java)
+            val intent = Intent(this, InspeccionActivity::class.java)
             startActivity(intent)
         }
     }
@@ -101,7 +104,9 @@ class MainActivity : AppCompatActivity() {
                     withContext(Dispatchers.IO) {
                         val sitioDao = db.sitioDao()
                         sitioDao.deleteAll()
-                        sitiosApi.forEach { sitioDao.insert(it) }
+                        sitiosApi.forEach { sitio ->
+                            sitioDao.insert(sitio)
+                        }
                     }
                     actualizarInterfaz()
                 }

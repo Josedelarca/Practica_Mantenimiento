@@ -1,0 +1,5 @@
+<!-- Solo para referencia de lo que añadiré -->
+<activity
+    android:name=".InspeccionActivity"
+    android:exported="false"
+    android:theme="@style/Theme.Pruebaderoom" />
