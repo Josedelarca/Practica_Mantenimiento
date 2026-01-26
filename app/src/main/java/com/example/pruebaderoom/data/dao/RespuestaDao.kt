@@ -1,6 +1,7 @@
 package com.example.pruebaderoom.data.dao
 
 import androidx.room.Dao
+import androidx.room.Delete
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
@@ -16,4 +17,7 @@ interface RespuestaDao {
 
     @Query("SELECT * FROM Respuesta WHERE id_tarea = :idTarea")
     suspend fun getByTarea(idTarea: Long): List<Respuesta>
+
+    @Delete
+    suspend fun delete(respuesta: Respuesta)
 }

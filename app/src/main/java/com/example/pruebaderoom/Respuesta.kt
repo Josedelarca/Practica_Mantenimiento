@@ -2,12 +2,14 @@ package com.example.pruebaderoom
 
 import android.content.Intent
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.os.Bundle
 import android.provider.MediaStore
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Button
+import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
@@ -19,8 +21,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.RecyclerView
 import com.example.pruebaderoom.data.AppDatabase
 import com.example.pruebaderoom.data.entity.Imagen
-import com.example.pruebaderoom.data.entity.Pregunta
-import com.example.pruebaderoom.data.entity.Seccion
+import com.example.pruebaderoom.data.entity.Respuesta as RespuestaEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -29,154 +30,205 @@ import java.io.FileOutputStream
 import java.util.*
 
 /**
- * Esta pantalla sirve para capturar las evidencias fotográficas de una tarea específica.
- * Hemos diseñado este código para que sea inteligente y le diga al técnico qué debe fotografiar.
+ * Pantalla de captura de fotos. 
+ * El estado VERDE en la lista solo se activa cuando el usuario pulsa "GUARDAR TODO".
  */
+data class FotoEvidencia(val bitmap: Bitmap, var rutaExistente: String? = null)
+
 class Respuesta : AppCompatActivity() {
 
     private lateinit var db: AppDatabase
-    private val listaBitmaps = mutableListOf<Bitmap>() // Guardamos las fotos tomadas en esta lista temporal
+    private val listaFotos = mutableListOf<FotoEvidencia>() 
     private lateinit var rvFotos: RecyclerView
     private lateinit var adapter: FotoAdapter
     
-    // Variables para los textos dinámicos de la pantalla
     private lateinit var txtSeccion: TextView
     private lateinit var txtPregunta: TextView
     private lateinit var txtRequisitos: TextView
     
-    // Aquí guardamos el código de la pregunta que recibimos desde la lista
     private var idPreguntaRecibido: Long = -1
+    private var idTareaRecibido: Long = -1
+    private var idRespuestaActual: Long = -1 
+    private var minFotosRequeridas: Int = 0
+    private var maxFotosPermitidas: Int = 0
 
-    // Este es el "escuchador" que recibe la foto de la cámara y la pone en la lista visual
     private val tomarFotoLauncher = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == RESULT_OK) {
-            // Extraemos la imagen de los datos recibidos
             val imageBitmap = result.data?.extras?.get("data") as? Bitmap
-            imageBitmap?.let {
-                listaBitmaps.add(it)
-                // Avisamos a la pantalla que hay una foto nueva para mostrar
-                adapter.notifyItemInserted(listaBitmaps.size - 1)
+            imageBitmap?.let { bitmap ->
+                if (listaFotos.size < maxFotosPermitidas) {
+                    guardarFotoAlInstante(bitmap)
+                } else {
+                    Toast.makeText(this, "Límite máximo alcanzado", Toast.LENGTH_SHORT).show()
+                }
             }
         }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Obligamos a la app a usar modo claro para que los colores azul y blanco se vean siempre profesionales
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
-        
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContentView(R.layout.activity_respuesta)
 
-        // 1. Conectamos con la base de datos local y con los elementos del diseño XML
         db = AppDatabase.getDatabase(this)
         txtSeccion = findViewById(R.id.txtSeccionActual)
         txtPregunta = findViewById(R.id.txtPreguntaActual)
         txtRequisitos = findViewById(R.id.txtRequisitosFotos)
         rvFotos = findViewById(R.id.rvFotos)
         
-        // 2. RECUPERAMOS EL ID: Leemos qué pregunta seleccionó el técnico anteriormente
         idPreguntaRecibido = intent.getLongExtra("ID_PREGUNTA", -1)
+        idTareaRecibido = intent.getLongExtra("ID_TAREA", -1)
 
-        // 3. CARGA HUMANA: Buscamos en Room los detalles reales de esa pregunta
-        cargarDetallesDeLaPregunta()
+        cargarDatosYFotosExistentes()
 
-        // Configuramos la lista horizontal para ver las miniaturas de las fotos tomadas
-        adapter = FotoAdapter(listaBitmaps)
+        adapter = FotoAdapter(listaFotos) { posicion ->
+            eliminarFotoFisicamente(posicion)
+        }
         rvFotos.adapter = adapter
 
-        // ACCIÓN: Al pulsar el botón de cámara, abrimos la aplicación de cámara del celular
         findViewById<Button>(R.id.btnSubir).setOnClickListener {
-            val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-            tomarFotoLauncher.launch(intent)
-        }
-
-        // ACCIÓN: Al pulsar "Guardar", guardamos las fotos en el celular y registramos el evento
-        findViewById<Button>(R.id.btnEnviar).setOnClickListener {
-            if (listaBitmaps.isEmpty()) {
-                Toast.makeText(this, "Por favor, toma al menos una foto primero", Toast.LENGTH_SHORT).show()
+            if (listaFotos.size >= maxFotosPermitidas) {
+                Toast.makeText(this, "Límite máximo alcanzado", Toast.LENGTH_SHORT).show()
             } else {
-                guardarTodoEnBaseDeDatos()
+                val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+                tomarFotoLauncher.launch(intent)
             }
         }
 
-        // Botón para cancelar y regresar a la lista de preguntas sin guardar nada
+        // CAMBIO: Solo al pulsar este botón marcamos la tarea como "Finalizado" (se pondrá VERDE)
+        findViewById<Button>(R.id.btnEnviar).setOnClickListener {
+            if (listaFotos.size < minFotosRequeridas) {
+                Toast.makeText(this, "Faltan fotos para el mínimo ($minFotosRequeridas)", Toast.LENGTH_SHORT).show()
+            } else {
+                marcarComoFinalizado()
+            }
+        }
+
         findViewById<Button>(R.id.btnVolver).setOnClickListener { finish() }
     }
 
     /**
-     * Esta función busca en Room la descripción de la pregunta y su sección.
-     * Así el técnico sabe exactamente qué está respondiendo (ej: "Sección Torre").
+     * Cambia el estado de la respuesta a "Finalizado" para que se vea verde en la lista.
      */
-    private fun cargarDetallesDeLaPregunta() {
-        if (idPreguntaRecibido == -1L) return
-
+    private fun marcarComoFinalizado() {
         lifecycleScope.launch {
-            // Realizamos la búsqueda en un hilo de fondo (IO) para que la app no se trabe
-            val (pregunta, seccion) = withContext(Dispatchers.IO) {
-                val preg = db.preguntaDao().getById(idPreguntaRecibido)
-                val sec = preg?.let { db.seccionDao().getById(it.idSeccion) }
-                Pair(preg, sec)
-            }
-
-            // Una vez encontrados los datos, los actualizamos en la pantalla (hilo principal)
-            pregunta?.let {
-                txtPregunta.text = it.descripcion
-                // CAMBIO: Ahora informamos sólo de la cantidad mínima requerida
-                txtRequisitos.text = "Esta tarea requiere al menos ${it.minImagenes} fotografías."
-            }
-            
-            seccion?.let {
-                txtSeccion.text = "SECCIÓN: ${it.nombre.uppercase()}"
-            }
-        }
-    }
-
-    /**
-     * Guarda las fotos físicamente en el almacenamiento del celular y registra sus rutas en Room.
-     */
-    private fun guardarTodoEnBaseDeDatos() {
-        lifecycleScope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    listaBitmaps.forEach { bitmap ->
-                        // Generamos un nombre único para cada foto
-                        val nombre = "evidencia_preg_${idPreguntaRecibido}_${UUID.randomUUID()}.jpg"
-                        val archivo = File(filesDir, nombre)
-                        val out = FileOutputStream(archivo)
-                        bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
-                        out.close()
-
-                        // Registramos la foto en Room vinculada a la pregunta
-                        val nuevaImagen = Imagen(
-                            idImagen = System.currentTimeMillis() + listaBitmaps.indexOf(bitmap),
-                            idRespuesta = idPreguntaRecibido, 
-                            rutaArchivo = archivo.absolutePath,
-                            marcaAgua = "Inspección ID: $idPreguntaRecibido - ${Date()}",
-                            fecha = Date()
-                        )
-                        db.imagenDao().insert(nuevaImagen)
+            withContext(Dispatchers.IO) {
+                if (idRespuestaActual != -1L) {
+                    val respuesta = db.respuestaDao().getAll().find { it.idRespuesta == idRespuestaActual }
+                    respuesta?.let {
+                        val finalizada = it.copy(texto = "Finalizado")
+                        db.respuestaDao().insert(finalizada)
                     }
                 }
-                Toast.makeText(this@Respuesta, "Evidencias guardadas con éxito", Toast.LENGTH_SHORT).show()
-                finish() // Regresamos automáticamente a la lista de preguntas
+            }
+            Toast.makeText(this@Respuesta, "Inspección completada con éxito", Toast.LENGTH_SHORT).show()
+            finish()
+        }
+    }
+
+    private fun guardarFotoAlInstante(bitmap: Bitmap) {
+        lifecycleScope.launch {
+            try {
+                val nuevaRuta = withContext(Dispatchers.IO) {
+                    if (idRespuestaActual == -1L) {
+                        val respuestaExistente = db.respuestaDao().getAll().find { 
+                            it.idPregunta == idPreguntaRecibido && it.idTarea == idTareaRecibido 
+                        }
+                        if (respuestaExistente == null) {
+                            idRespuestaActual = System.currentTimeMillis()
+                            // Guardamos inicialmente como "En proceso" (Se verá ROJO)
+                            db.respuestaDao().insert(RespuestaEntity(idRespuestaActual, idPreguntaRecibido, idTareaRecibido, "En proceso", Date()))
+                        } else {
+                            idRespuestaActual = respuestaExistente.idRespuesta
+                        }
+                    }
+
+                    val file = File(filesDir, "img_${idRespuestaActual}_${UUID.randomUUID()}.jpg")
+                    val out = FileOutputStream(file)
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
+                    out.close()
+                    
+                    db.imagenDao().insert(Imagen(
+                        idImagen = System.currentTimeMillis(),
+                        idRespuesta = idRespuestaActual, 
+                        rutaArchivo = file.absolutePath,
+                        marcaAgua = "Autoguardado",
+                        fecha = Date()
+                    ))
+                    file.absolutePath
+                }
+
+                listaFotos.add(FotoEvidencia(bitmap, nuevaRuta))
+                adapter.notifyItemInserted(listaFotos.size - 1)
+                
             } catch (e: Exception) {
-                Toast.makeText(this@Respuesta, "Error al guardar: ${e.message}", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@Respuesta, "Error al autoguardar", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    // Adaptador para mostrar las miniaturas de las fotos tomadas en la lista inferior
-    class FotoAdapter(private val fotos: List<Bitmap>) : RecyclerView.Adapter<FotoAdapter.FotoViewHolder>() {
+    private fun eliminarFotoFisicamente(posicion: Int) {
+        val foto = listaFotos[posicion]
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                foto.rutaExistente?.let { path ->
+                    val file = File(path)
+                    if (file.exists()) file.delete()
+                }
+            }
+            listaFotos.removeAt(posicion)
+            adapter.notifyItemRemoved(posicion)
+        }
+    }
+
+    private fun cargarDatosYFotosExistentes() {
+        lifecycleScope.launch {
+            val (preg, sec, fotosGuardadas) = withContext(Dispatchers.IO) {
+                val p = db.preguntaDao().getById(idPreguntaRecibido)
+                val s = p?.let { db.seccionDao().getById(it.idSeccion) }
+                val r = db.respuestaDao().getAll().find { it.idPregunta == idPreguntaRecibido && it.idTarea == idTareaRecibido }
+                r?.let { idRespuestaActual = it.idRespuesta }
+                val imgs = r?.let { db.imagenDao().getByRespuesta(it.idRespuesta) } ?: emptyList()
+                Triple(p, s, imgs)
+            }
+
+            preg?.let {
+                minFotosRequeridas = it.minImagenes
+                maxFotosPermitidas = it.maxImagenes
+                txtPregunta.text = it.descripcion
+                txtRequisitos.text = "Mínimo: $minFotosRequeridas fotos"
+            }
+            sec?.let { txtSeccion.text = "SECCIÓN: ${it.nombre.uppercase()}" }
+
+            if (fotosGuardadas.isNotEmpty()) {
+                withContext(Dispatchers.IO) {
+                    fotosGuardadas.forEach { img ->
+                        val bitmap = BitmapFactory.decodeFile(img.rutaArchivo)
+                        if (bitmap != null) {
+                            withContext(Dispatchers.Main) {
+                                listaFotos.add(FotoEvidencia(bitmap, img.rutaArchivo))
+                                adapter.notifyItemInserted(listaFotos.size - 1)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    class FotoAdapter(private val fotos: List<FotoEvidencia>, private val onEliminar: (Int) -> Unit) : RecyclerView.Adapter<FotoAdapter.FotoViewHolder>() {
         class FotoViewHolder(view: View) : RecyclerView.ViewHolder(view) {
             val ivFoto: ImageView = view.findViewById(R.id.ivFotoItem)
+            val btnEliminar: ImageButton = view.findViewById(R.id.btnEliminarFoto)
         }
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): FotoViewHolder {
-            val view = LayoutInflater.from(parent.context).inflate(R.layout.item_foto, parent, false)
-            return FotoViewHolder(view)
+            val v = LayoutInflater.from(parent.context).inflate(R.layout.item_foto, parent, false)
+            return FotoViewHolder(v)
         }
         override fun onBindViewHolder(holder: FotoViewHolder, position: Int) {
-            holder.ivFoto.setImageBitmap(fotos[position])
+            holder.ivFoto.setImageBitmap(fotos[position].bitmap)
+            holder.btnEliminar.setOnClickListener { onEliminar(position) }
         }
         override fun getItemCount() = fotos.size
     }

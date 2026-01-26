@@ -1,6 +1,7 @@
 package com.example.pruebaderoom
 
 import android.content.Intent
+import android.graphics.Color
 import android.os.Bundle
 import android.util.Log
 import android.view.LayoutInflater
@@ -26,8 +27,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
- * Esta pantalla muestra la lista de tareas.
- * La hemos simplificado para que solo muestre el mínimo de fotos necesarias.
+ * Pantalla que muestra el formulario con colores inteligentes:
+ * - Negro: No empezada.
+ * - Rojo: Empezada (con fotos) pero no finalizada.
+ * - Verde: Finalizada correctamente (cuando pulsó GUARDAR TODO).
  */
 class InspeccionActivity : AppCompatActivity() {
 
@@ -35,6 +38,7 @@ class InspeccionActivity : AppCompatActivity() {
     private lateinit var rvPreguntas: RecyclerView
     private lateinit var txtTituloFormulario: TextView
     private var btnVolver: ImageButton? = null
+    private var idTareaRecibido: Long = -1
 
     sealed class InspeccionItem {
         data class SeccionHeader(val seccion: Seccion) : InspeccionItem()
@@ -47,6 +51,7 @@ class InspeccionActivity : AppCompatActivity() {
         enableEdgeToEdge()
         setContentView(R.layout.activity_inspeccion)
 
+        idTareaRecibido = intent.getLongExtra("ID_TAREA", -1L)
         db = AppDatabase.getDatabase(this)
         txtTituloFormulario = findViewById(R.id.txtTituloFormulario)
         rvPreguntas = findViewById(R.id.rvPreguntas)
@@ -55,8 +60,13 @@ class InspeccionActivity : AppCompatActivity() {
         rvPreguntas.layoutManager = LinearLayoutManager(this)
         btnVolver?.setOnClickListener { finish() }
 
-        cargarYMostrar()
         sincronizarFormulario(1L)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Refrescamos la lista al volver para que los colores se actualicen
+        cargarYMostrar()
     }
 
     private fun sincronizarFormulario(id: Long) {
@@ -77,7 +87,7 @@ class InspeccionActivity : AppCompatActivity() {
                     cargarYMostrar()
                 }
             } catch (e: Exception) {
-                Log.e("SYNC", "Sin conexión, mostrando datos locales.")
+                cargarYMostrar()
             }
         }
     }
@@ -94,7 +104,8 @@ class InspeccionActivity : AppCompatActivity() {
                 }
                 list
             }
-            rvPreguntas.adapter = InspeccionAdapter(hibrido)
+            rvPreguntas.adapter = InspeccionAdapter(hibrido, idTareaRecibido, db)
+            
             if (hibrido.isNotEmpty()) {
                 val info = withContext(Dispatchers.IO) { db.formularioDao().getAll().firstOrNull() }
                 txtTituloFormulario.text = info?.nombre ?: "Inspección"
@@ -102,7 +113,12 @@ class InspeccionActivity : AppCompatActivity() {
         }
     }
 
-    class InspeccionAdapter(private val items: List<InspeccionItem>) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+    class InspeccionAdapter(
+        private val items: List<InspeccionItem>,
+        private val idTarea: Long,
+        private val database: AppDatabase
+    ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
+        
         override fun getItemViewType(position: Int) = if (items[position] is InspeccionItem.SeccionHeader) 0 else 1
         
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
@@ -120,12 +136,42 @@ class InspeccionActivity : AppCompatActivity() {
                 holder.txtNombre.text = item.seccion.nombre
             } else if (holder is PreguntaViewHolder && item is InspeccionItem.PreguntaItem) {
                 holder.txtDesc.text = item.pregunta.descripcion
-                // CAMBIO: Ahora solo mostramos el mínimo de fotos solicitado
                 holder.txtCant.text = "Mínimo: ${item.pregunta.minImagenes} fotos"
                 
+                // LÓGICA DE COLORES BASADA EN EL BOTÓN "GUARDAR TODO"
+                (holder.itemView.context as InspeccionActivity).lifecycleScope.launch {
+                    val respuesta = withContext(Dispatchers.IO) {
+                        database.respuestaDao().getAll().find { 
+                            it.idPregunta == item.pregunta.idPregunta && it.idTarea == idTarea 
+                        }
+                    }
+
+                    when {
+                        // CASO 1: YA SE PULSÓ EL BOTÓN "GUARDAR TODO" -> VERDE
+                        respuesta?.texto == "Finalizado" -> {
+                            holder.txtDesc.setTextColor(Color.parseColor("#43A047")) 
+                            holder.btnCamara.text = "EDITAR"
+                            holder.btnCamara.setTextColor(Color.parseColor("#43A047"))
+                        }
+                        // CASO 2: TIENE FOTOS PERO NO HA FINALIZADO -> ROJO
+                        respuesta?.texto == "En proceso" -> {
+                            holder.txtDesc.setTextColor(Color.parseColor("#E53935")) 
+                            holder.btnCamara.text = "INCOMPLETA"
+                            holder.btnCamara.setTextColor(Color.parseColor("#E53935"))
+                        }
+                        // CASO 3: NO SE HA EMPEZADO -> NEGRO
+                        else -> {
+                            holder.txtDesc.setTextColor(Color.parseColor("#333333"))
+                            holder.btnCamara.text = "TOMAR FOTO"
+                            holder.btnCamara.setTextColor(Color.parseColor("#1E2A44"))
+                        }
+                    }
+                }
+
                 holder.btnCamara.setOnClickListener {
                     val intent = Intent(holder.itemView.context, Respuesta::class.java)
                     intent.putExtra("ID_PREGUNTA", item.pregunta.idPregunta)
+                    intent.putExtra("ID_TAREA", idTarea) 
                     holder.itemView.context.startActivity(intent)
                 }
             }

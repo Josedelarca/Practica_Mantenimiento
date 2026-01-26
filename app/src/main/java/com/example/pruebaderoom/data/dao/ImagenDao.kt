@@ -16,4 +16,8 @@ interface ImagenDao {
 
     @Query("SELECT * FROM Imagen WHERE id_respuesta = :idRespuesta")
     suspend fun getByRespuesta(idRespuesta: Long): List<Imagen>
+
+    // AGREGADO: Para limpiar las imágenes viejas de la base de datos al editar
+    @Query("DELETE FROM Imagen WHERE id_respuesta = :idRespuesta")
+    suspend fun deleteByRespuesta(idRespuesta: Long)
 }

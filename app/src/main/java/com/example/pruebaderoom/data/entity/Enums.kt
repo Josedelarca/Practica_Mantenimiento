@@ -5,5 +5,5 @@ enum class TipoMantenimiento {
 }
 
 enum class EstadoTarea {
-    PENDIENTE, EN_CURSO, COMPLETA
+    PENDIENTE, EN_PROCESO, FINALIZADA
 }
