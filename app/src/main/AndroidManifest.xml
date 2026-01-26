@@ -3,6 +3,9 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    
+    <!-- Característica de cámara obligatoria -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
 
     <application
         android:allowBackup="true"
@@ -14,7 +17,18 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.Pruebaderoom"
         android:usesCleartextTraffic="true">
-        
+
+        <!-- FILE PROVIDER: Necesario para guardar fotos HD -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.provider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <activity
             android:name=".InspeccionActivity"
             android:exported="false" />
