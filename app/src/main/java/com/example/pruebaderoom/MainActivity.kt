@@ -28,6 +28,10 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.*
 
+/**
+ * Esta es nuestra pantalla principal. Aquí es donde el usuario elige el sitio
+ * que va a inspeccionar y puede ver su ubicación en el mapa.
+ */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var db: AppDatabase
@@ -38,30 +42,36 @@ class MainActivity : AppCompatActivity() {
     private var sitioSeleccionado: Sitio? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        // Forzamos el modo claro para que la interfaz se vea siempre igual
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
         
+        // Ajustamos el diseño para que no se oculte detrás de las barras del sistema (notch, botones, etc.)
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
             insets
         }
 
+        // Inicializamos la base de datos y buscamos los elementos de la interfaz por su ID
         db = AppDatabase.getDatabase(this)
         txtInfo = findViewById(R.id.txtInfo)
         autoCompleteSitios = findViewById(R.id.autoCompleteCiudades)
         btnVerMapa = findViewById(R.id.btnVerMapa)
         val btnpasar = findViewById<Button>(R.id.btnpasar)
 
+        // Al arrancar, mostramos lo que tengamos guardado y tratamos de traer datos nuevos de internet
         actualizarInterfaz()
         sincronizarSitios()
 
+        // Cuando el usuario elige un sitio de la lista desplegable...
         autoCompleteSitios.onItemClickListener = AdapterView.OnItemClickListener { parent, _, position, _ ->
             val nombreSeleccionado = parent.getItemAtPosition(position) as String
             sitioSeleccionado = listaSitios.find { it.nombre == nombreSeleccionado }
             
+            // Mostramos los detalles del sitio seleccionado en pantalla
             sitioSeleccionado?.let {
                 txtInfo.text = """
                     ID SITIO: ${it.idSitio}
@@ -69,10 +79,11 @@ class MainActivity : AppCompatActivity() {
                     TEAM: ${it.teem}
                     VISITAS: ${it.visit}
                 """.trimIndent()
-                btnVerMapa.visibility = View.VISIBLE
+                btnVerMapa.visibility = View.VISIBLE // Habilitamos el botón para ver el mapa
             }
         }
 
+        // Si le da al botón de mapa, abrimos Google Maps con las coordenadas del sitio
         btnVerMapa.setOnClickListener {
             sitioSeleccionado?.let { sitio ->
                 try {
@@ -86,6 +97,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+        // Este botón "Iniciar" crea una nueva tarea de inspección en la base de datos y nos lleva a la otra pantalla
         btnpasar.setOnClickListener {
             val sitio = sitioSeleccionado
             if (sitio == null) {
@@ -94,9 +106,9 @@ class MainActivity : AppCompatActivity() {
             }
 
             lifecycleScope.launch {
-                val nuevaTareaId = System.currentTimeMillis()
+                val nuevaTareaId = System.currentTimeMillis() // Usamos el tiempo actual como un ID único temporal
                 
-                // USAMOS SÓLO LOS CAMPOS QUE EXISTEN EN TU TABLA TAREA
+                // Preparamos los datos de la nueva tarea
                 val nuevaTarea = Tarea(
                     idTarea = nuevaTareaId,
                     idSitio = sitio.idSitio,
@@ -104,13 +116,15 @@ class MainActivity : AppCompatActivity() {
                     tipoMantenimiento = TipoMantenimiento.PREVENTIVO,
                     fecha = Date(),
                     observacionesGenerales = "Inspección iniciada desde la App",
-                    estado = EstadoTarea.EN_PROCESO // Usamos el nuevo estado solicitado
+                    estado = EstadoTarea.EN_PROCESO
                 )
                 
+                // Guardamos la tarea en la base de datos local (en segundo plano)
                 withContext(Dispatchers.IO) {
                     db.tareaDao().insert(nuevaTarea)
                 }
 
+                // Nos vamos a la pantalla de Inspección pasando el ID de la tarea
                 val intent = Intent(this@MainActivity, InspeccionActivity::class.java)
                 intent.putExtra("ID_TAREA", nuevaTareaId)
                 startActivity(intent)
@@ -118,6 +132,10 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Esta función se conecta al servidor para bajar la lista de sitios actualizada.
+     * Si encuentra datos nuevos, limpia lo viejo y guarda lo nuevo en el celular.
+     */
     private fun sincronizarSitios() {
         lifecycleScope.launch {
             try {
@@ -129,14 +147,17 @@ class MainActivity : AppCompatActivity() {
                         sitioDao.deleteAll()
                         sitiosApi.forEach { sitioDao.insert(it) }
                     }
-                    actualizarInterfaz()
+                    actualizarInterfaz() // Refrescamos la lista que ve el usuario
                 }
             } catch (e: Exception) {
-                Log.e("API", "Error: ${e.message}")
+                Log.e("API", "Error al sincronizar: ${e.message}")
             }
         }
     }
 
+    /**
+     * Lee los sitios de la base de datos local y los pone en el buscador (Autocomplete).
+     */
     private fun actualizarInterfaz() {
         lifecycleScope.launch {
             val sitiosLocal = withContext(Dispatchers.IO) { db.sitioDao().getAll() }

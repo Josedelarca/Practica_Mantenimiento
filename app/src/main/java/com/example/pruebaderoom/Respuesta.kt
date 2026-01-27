@@ -38,9 +38,9 @@ import java.text.SimpleDateFormat
 import java.util.*
 
 /**
- * Pantalla de captura de fotos. 
- * Las fotos se guardan con el nombre del sitio y fecha. 
- * Si se borran todas las fotos, la pregunta vuelve a estado "Incompleto" (Rojo).
+ * Esta pantalla se encarga de lo más importante: la captura de fotos.
+ * Aquí el usuario toma la evidencia, se le pone una marca de agua (GPS, fecha, sitio)
+ * y se asegura de que cumpla con el mínimo de fotos antes de guardar.
  */
 data class FotoEvidencia(val bitmap: Bitmap, var rutaExistente: String? = null)
 
@@ -65,17 +65,22 @@ class Respuesta : AppCompatActivity() {
     private var photoFile: File? = null
     private var photoUri: Uri? = null
 
+    // Lanzador para abrir la cámara del celular
     private val takePictureLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         if (success && photoFile != null) {
             val rawBitmap = BitmapFactory.decodeFile(photoFile!!.absolutePath)
             rawBitmap?.let { bitmap ->
+                // Corregimos la orientación porque a veces salen acostadas
                 val bitmapDerecho = corregirRotacion(photoFile!!.absolutePath, bitmap)
                 if (listaFotos.size < maxFotosPermitidas) {
+                    // Le ponemos los datos de GPS y Fecha directamente a la imagen
                     val bitmapConMarca = agregarMarcaDeAgua(bitmapDerecho)
+                    // Guardamos el archivo final en la memoria del celular
                     guardarFotoAlInstante(bitmapConMarca)
+                    // Borramos la foto temporal sin marca de agua
                     if (photoFile!!.exists()) photoFile!!.delete()
                 } else {
-                    Toast.makeText(this, "Límite alcanzado", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Ya no caben más fotos", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -96,6 +101,7 @@ class Respuesta : AppCompatActivity() {
         idPreguntaRecibido = intent.getLongExtra("ID_PREGUNTA", -1)
         idTareaRecibido = intent.getLongExtra("ID_TAREA", -1)
 
+        // Cargamos la pregunta y si ya había fotos tomadas antes, las mostramos
         cargarDatosExistentesYsitio()
 
         adapter = FotoAdapter(
@@ -105,17 +111,19 @@ class Respuesta : AppCompatActivity() {
         )
         rvFotos.adapter = adapter
 
+        // Botón para tomar una nueva foto
         findViewById<Button>(R.id.btnSubir).setOnClickListener {
             if (listaFotos.size >= maxFotosPermitidas) {
-                Toast.makeText(this, "Máximo alcanzado", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Límite de fotos alcanzado", Toast.LENGTH_SHORT).show()
             } else {
                 lanzarCamaraSegura()
             }
         }
 
+        // Botón "GUARDAR TODO" para terminar esta pregunta
         findViewById<Button>(R.id.btnEnviar).setOnClickListener {
             if (listaFotos.size < minFotosRequeridas) {
-                Toast.makeText(this, "Faltan fotos para el mínimo ($minFotosRequeridas)", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Debes tomar al menos $minFotosRequeridas fotos", Toast.LENGTH_SHORT).show()
             } else {
                 marcarComoFinalizado()
             }
@@ -125,8 +133,8 @@ class Respuesta : AppCompatActivity() {
     }
 
     /**
-     * Borra la foto de la lista, del disco y de la base de datos.
-     * Si no quedan fotos, la pregunta vuelve a ponerse en rojo en la lista.
+     * Borra la foto no solo de la pantalla, sino también del archivo real en el celular
+     * y de la base de datos para no dejar basura.
      */
     private fun eliminarFotoFisicamente(posicion: Int) {
         val foto = listaFotos[posicion]
@@ -141,7 +149,7 @@ class Respuesta : AppCompatActivity() {
             listaFotos.removeAt(posicion)
             adapter.notifyItemRemoved(posicion)
 
-            // CAMBIO: Si ya no hay fotos, volvemos el estado a "En proceso" para que se vea rojo
+            // Si el usuario borra todas las fotos, la pregunta vuelve a estar "Incompleta"
             if (listaFotos.isEmpty()) {
                 withContext(Dispatchers.IO) {
                     val respuesta = db.respuestaDao().getAll().find { it.idRespuesta == idRespuestaActual }
@@ -154,6 +162,10 @@ class Respuesta : AppCompatActivity() {
         }
     }
 
+    /**
+     * Revisa la información EXIF de la foto para ver si hay que rotarla
+     * (así evitamos que las fotos salgan de lado).
+     */
     private fun corregirRotacion(path: String, source: Bitmap): Bitmap {
         val exif = ExifInterface(path)
         val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED)
@@ -167,6 +179,10 @@ class Respuesta : AppCompatActivity() {
         return Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
     }
 
+    /**
+     * Dibuja un rectángulo oscuro abajo de la foto y escribe:
+     * El nombre del sitio, las coordenadas GPS y la fecha/hora actual.
+     */
     private fun agregarMarcaDeAgua(bitmap: Bitmap): Bitmap {
         val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(mutableBitmap)
@@ -189,16 +205,22 @@ class Respuesta : AppCompatActivity() {
         return mutableBitmap
     }
 
+    /**
+     * Prepara el archivo donde se va a guardar la foto temporalmente y abre la cámara.
+     */
     private fun lanzarCamaraSegura() {
         try {
             photoFile = File.createTempFile("CAPTURA_", ".jpg", filesDir)
             photoUri = FileProvider.getUriForFile(this, "${packageName}.provider", photoFile!!)
             photoUri?.let { takePictureLauncher.launch(it) }
         } catch (e: Exception) {
-            Toast.makeText(this, "Error al abrir cámara", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, "No pudimos abrir la cámara", Toast.LENGTH_SHORT).show()
         }
     }
 
+    /**
+     * Muestra la foto en pantalla completa cuando el usuario la toca.
+     */
     private fun mostrarVistaPrevia(bitmap: Bitmap) {
         val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         dialog.setContentView(R.layout.dialog_foto_preview)
@@ -209,6 +231,9 @@ class Respuesta : AppCompatActivity() {
         dialog.show()
     }
 
+    /**
+     * Guarda el estado "Finalizado" en la base de datos para que en la lista principal salga VERDE.
+     */
     private fun marcarComoFinalizado() {
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
@@ -220,13 +245,13 @@ class Respuesta : AppCompatActivity() {
                     }
                 }
             }
-            Toast.makeText(this@Respuesta, "¡Guardado!", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this@Respuesta, "¡Todo listo!", Toast.LENGTH_SHORT).show()
             finish()
         }
     }
 
     /**
-     * Guarda la foto con un nombre que incluye el SITIO y la FECHA.
+     * Convierte el bitmap procesado en un archivo JPG real y lo guarda en la carpeta privada de la app.
      */
     private fun guardarFotoAlInstante(bitmap: Bitmap) {
         lifecycleScope.launch {
@@ -244,7 +269,7 @@ class Respuesta : AppCompatActivity() {
                         }
                     }
 
-                    // GENERAMOS NOMBRE CON SITIO Y FECHA
+                    // El nombre del archivo lleva el sitio y la hora para que sea fácil identificarlo
                     val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
                     val nombreSitioLimpio = (sitioActual?.nombre ?: "SITIO").replace(" ", "_")
                     val nombreArchivo = "${nombreSitioLimpio}_${timeStamp}_${UUID.randomUUID().toString().take(4)}.jpg"
@@ -260,11 +285,14 @@ class Respuesta : AppCompatActivity() {
                 listaFotos.add(FotoEvidencia(bitmap, nuevaRuta))
                 adapter.notifyItemInserted(listaFotos.size - 1)
             } catch (e: Exception) {
-                Toast.makeText(this@Respuesta, "Error al guardar foto", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@Respuesta, "Error al guardar la foto", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
+    /**
+     * Busca en la base de datos local toda la info de la pregunta y si ya había fotos guardadas.
+     */
     private fun cargarDatosExistentesYsitio() {
         lifecycleScope.launch {
             val data: List<Any?> = withContext(Dispatchers.IO) {
@@ -286,7 +314,7 @@ class Respuesta : AppCompatActivity() {
                 minFotosRequeridas = it.minImagenes
                 maxFotosPermitidas = it.maxImagenes
                 txtPregunta.text = it.descripcion
-                txtRequisitos.text = "Mínimo: $minFotosRequeridas fotos"
+                txtRequisitos.text = "Se necesitan al menos $minFotosRequeridas fotos"
             }
             s?.let { txtSeccion.text = "SECCIÓN: ${it.nombre.uppercase()}" }
             if (imgs.isNotEmpty()) {
@@ -305,6 +333,9 @@ class Respuesta : AppCompatActivity() {
         }
     }
 
+    /**
+     * Adaptador para mostrar las miniaturas de las fotos que vamos tomando.
+     */
     class FotoAdapter(
         private val fotos: List<FotoEvidencia>, 
         private val onEliminar: (Int) -> Unit,

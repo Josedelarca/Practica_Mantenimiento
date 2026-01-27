@@ -3,7 +3,6 @@ package com.example.pruebaderoom
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
-import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -18,6 +17,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.example.pruebaderoom.data.AppDatabase
+import com.example.pruebaderoom.data.ReporteManager
 import com.example.pruebaderoom.data.RetrofitClient
 import com.example.pruebaderoom.data.entity.Formulario
 import com.example.pruebaderoom.data.entity.Pregunta
@@ -25,13 +25,8 @@ import com.example.pruebaderoom.data.entity.Seccion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 
-/**
- * Pantalla que muestra el formulario con colores inteligentes:
- * - Negro: No empezada.
- * - Rojo: Empezada (con fotos) pero no finalizada.
- * - Verde: Finalizada correctamente (cuando pulsó GUARDAR TODO).
- */
 class InspeccionActivity : AppCompatActivity() {
 
     private lateinit var db: AppDatabase
@@ -53,19 +48,71 @@ class InspeccionActivity : AppCompatActivity() {
 
         idTareaRecibido = intent.getLongExtra("ID_TAREA", -1L)
         db = AppDatabase.getDatabase(this)
+        
         txtTituloFormulario = findViewById(R.id.txtTituloFormulario)
         rvPreguntas = findViewById(R.id.rvPreguntas)
         btnVolver = findViewById(R.id.btnVolverInicio)
+        val btnEnviar = findViewById<Button>(R.id.btnEnviarReporte)
         
         rvPreguntas.layoutManager = LinearLayoutManager(this)
         btnVolver?.setOnClickListener { finish() }
 
         sincronizarFormulario(1L)
+
+        btnEnviar.setOnClickListener {
+            enviarTodoAlServidor()
+        }
+    }
+
+    private fun enviarTodoAlServidor() {
+        lifecycleScope.launch {
+            try {
+                val tarea = withContext(Dispatchers.IO) { db.tareaDao().getById(idTareaRecibido) }
+                if (tarea == null) return@launch
+
+                val respuestasConFotos = withContext(Dispatchers.IO) {
+                    val lista = mutableListOf<Pair<ReporteManager.RespuestaJson, List<File>>>()
+                    val respuestasDB = db.respuestaDao().getByTarea(idTareaRecibido)
+                    
+                    respuestasDB.forEach { r ->
+                        val fotos = db.imagenDao().getByRespuesta(r.idRespuesta).map { File(it.rutaArchivo) }
+                        val respJson = ReporteManager.RespuestaJson(
+                            temp_id = "r${r.idRespuesta}",
+                            pregunta_id = r.idPregunta,
+                            texto_respuesta = if (r.texto == "Finalizado") "Completado correctamente" else r.texto
+                        )
+                        lista.add(Pair(respJson, fotos))
+                    }
+                    lista
+                }
+
+                if (respuestasConFotos.isEmpty()) {
+                    Toast.makeText(this@InspeccionActivity, "No hay respuestas para enviar", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                val manager = ReporteManager(RetrofitClient.instance)
+                
+                Toast.makeText(this@InspeccionActivity, "Enviando reporte...", Toast.LENGTH_SHORT).show()
+                
+                manager.enviarReporteCompleto(
+                    sitioId = tarea.idSitio.toLongOrNull() ?: 1L,
+                    formularioId = tarea.idFormulario,
+                    observaciones = tarea.observacionesGenerales,
+                    respuestasConFotos = respuestasConFotos
+                )
+
+                Toast.makeText(this@InspeccionActivity, "¡Reporte enviado con éxito!", Toast.LENGTH_LONG).show()
+                finish()
+
+            } catch (e: Exception) {
+                Toast.makeText(this@InspeccionActivity, "Error al enviar: ${e.message}", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     override fun onResume() {
         super.onResume()
-        // Refrescamos la lista al volver para que los colores se actualicen
         cargarYMostrar()
     }
 
@@ -138,7 +185,6 @@ class InspeccionActivity : AppCompatActivity() {
                 holder.txtDesc.text = item.pregunta.descripcion
                 holder.txtCant.text = "Mínimo: ${item.pregunta.minImagenes} fotos"
                 
-                // LÓGICA DE COLORES BASADA EN EL BOTÓN "GUARDAR TODO"
                 (holder.itemView.context as InspeccionActivity).lifecycleScope.launch {
                     val respuesta = withContext(Dispatchers.IO) {
                         database.respuestaDao().getAll().find { 
@@ -147,19 +193,16 @@ class InspeccionActivity : AppCompatActivity() {
                     }
 
                     when {
-                        // CASO 1: YA SE PULSÓ EL BOTÓN "GUARDAR TODO" -> VERDE
                         respuesta?.texto == "Finalizado" -> {
                             holder.txtDesc.setTextColor(Color.parseColor("#43A047")) 
                             holder.btnCamara.text = "EDITAR"
                             holder.btnCamara.setTextColor(Color.parseColor("#43A047"))
                         }
-                        // CASO 2: TIENE FOTOS PERO NO HA FINALIZADO -> ROJO
                         respuesta?.texto == "En proceso" -> {
                             holder.txtDesc.setTextColor(Color.parseColor("#E53935")) 
                             holder.btnCamara.text = "INCOMPLETA"
                             holder.btnCamara.setTextColor(Color.parseColor("#E53935"))
                         }
-                        // CASO 3: NO SE HA EMPEZADO -> NEGRO
                         else -> {
                             holder.txtDesc.setTextColor(Color.parseColor("#333333"))
                             holder.btnCamara.text = "TOMAR FOTO"

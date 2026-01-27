@@ -2,6 +2,10 @@ package com.example.pruebaderoom.data
 
 import com.google.gson.annotations.SerializedName
 
+/**
+ * Estas clases sirven para "traducir" lo que nos envía el servidor sobre los formularios.
+ * El servidor nos manda un JSON gigante y estas cajitas lo organizan para que la app lo entienda.
+ */
 data class FormularioFullResponse(
     @SerializedName("success") val success: Boolean,
     @SerializedName("data") val data: FormularioData

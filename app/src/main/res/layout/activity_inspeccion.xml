@@ -14,7 +14,6 @@
         android:background="#1E2A44"
         app:layout_constraintTop_toTopOf="parent"/>
 
-    <!-- BOTÓN DE REGRESO -->
     <ImageButton
         android:id="@+id/btnVolverInicio"
         android:layout_width="48dp"
@@ -41,14 +40,36 @@
         app:layout_constraintStart_toEndOf="@id/btnVolverInicio"
         app:layout_constraintEnd_toEndOf="parent"/>
 
-    <!-- LISTA DE PREGUNTAS -->
+    <!-- CONTENEDOR PARA EL BOTÓN (Fijado abajo) -->
+    <FrameLayout
+        android:id="@+id/containerBotonEnviar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#FFFFFF"
+        android:elevation="8dp"
+        android:padding="16dp"
+        app:layout_constraintBottom_toBottomOf="parent">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnEnviarReporte"
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:text="ENVIAR REPORTE COMPLETO"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            app:cornerRadius="12dp"
+            android:backgroundTint="#43A047" />
+    </FrameLayout>
+
+    <!-- LISTA DE PREGUNTAS (Ahora termina arriba del botón) -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rvPreguntas"
         android:layout_width="0dp"
         android:layout_height="0dp"
         android:padding="8dp"
+        android:clipToPadding="false"
         app:layout_constraintTop_toBottomOf="@id/topBarInspeccion"
-        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintBottom_toTopOf="@id/containerBotonEnviar"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         tools:listitem="@android:layout/simple_list_item_2"/>
