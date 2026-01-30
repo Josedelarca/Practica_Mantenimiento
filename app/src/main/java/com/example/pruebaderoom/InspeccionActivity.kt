@@ -24,6 +24,7 @@ import com.example.pruebaderoom.data.RetrofitClient
 import com.example.pruebaderoom.data.entity.Formulario
 import com.example.pruebaderoom.data.entity.Pregunta
 import com.example.pruebaderoom.data.entity.Seccion
+import com.example.pruebaderoom.data.entity.Respuesta as RespuestaEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -34,6 +35,7 @@ class InspeccionActivity : AppCompatActivity() {
     private lateinit var db: AppDatabase
     private lateinit var rvPreguntas: RecyclerView
     private lateinit var txtTituloFormulario: TextView
+    private lateinit var btnEnviar: Button
     private var idTareaRecibido: Long = -1
 
     sealed class InspeccionItem {
@@ -53,7 +55,7 @@ class InspeccionActivity : AppCompatActivity() {
         txtTituloFormulario = findViewById(R.id.txtTituloFormulario)
         rvPreguntas = findViewById(R.id.rvPreguntas)
         val btnVolver = findViewById<ImageButton>(R.id.btnVolverInicio)
-        val btnEnviar = findViewById<Button>(R.id.btnEnviarReporte)
+        btnEnviar = findViewById(R.id.btnEnviarReporte)
         
         rvPreguntas.layoutManager = LinearLayoutManager(this)
         btnVolver?.setOnClickListener { finish() }
@@ -63,6 +65,8 @@ class InspeccionActivity : AppCompatActivity() {
         btnEnviar.setOnClickListener {
             enviarTodoAlServidor()
         }
+        
+        actualizarEstadoBotonEnvio()
     }
 
     private fun sincronizarFormulario(id: Long) {
@@ -73,7 +77,6 @@ class InspeccionActivity : AppCompatActivity() {
                 if (response.success) {
                     val data = response.data
                     
-                    // Preparamos las listas de entidades y sus IDs para la limpieza
                     val seccionesApi = data.secciones.map { s -> Seccion(s.id, data.id, s.nombre) }
                     val idsSeccionesApi = seccionesApi.map { it.idSeccion }
                     
@@ -82,25 +85,44 @@ class InspeccionActivity : AppCompatActivity() {
                     }
                     val idsPreguntasApi = preguntasApi.map { it.idPregunta }
 
-                    // Operación atómica de actualización y limpieza
                     db.withTransaction {
-                        // 1. Actualizar Formulario
                         db.formularioDao().insert(Formulario(data.id, data.nombre, data.descripcion))
-
-                        // 2. Limpiar datos que ya no existen en la API (Detectamos eliminaciones)
                         db.seccionDao().deleteOldSecciones(data.id, idsSeccionesApi)
                         db.preguntaDao().deleteOldPreguntas(data.id, idsPreguntasApi)
-
-                        // 3. Sincronizar (Insertar nuevos o Actualizar existentes)
                         db.seccionDao().upsertAll(seccionesApi)
                         db.preguntaDao().upsertAll(preguntasApi)
                     }
                     
                     cargarYMostrar()
+                    actualizarEstadoBotonEnvio()
                 }
             } catch (e: Exception) {
                 Log.e("API", "Error al sincronizar formulario: ${e.message}")
                 cargarYMostrar()
+            }
+        }
+    }
+
+    private fun actualizarEstadoBotonEnvio() {
+        lifecycleScope.launch {
+            val estaCompleto = withContext(Dispatchers.IO) {
+                val preguntas = db.preguntaDao().getAll()
+                if (preguntas.isEmpty()) return@withContext false
+                
+                preguntas.all { pregunta ->
+                    val respuesta = db.respuestaDao().getAll().find { 
+                        it.idPregunta == pregunta.idPregunta && it.idTarea == idTareaRecibido 
+                    }
+                    if (respuesta == null) return@all false
+                    val cantImagenes = db.imagenDao().getByRespuesta(respuesta.idRespuesta).size
+                    cantImagenes >= pregunta.minImagenes
+                }
+            }
+
+            withContext(Dispatchers.Main) {
+                btnEnviar.isEnabled = estaCompleto
+                btnEnviar.alpha = if (estaCompleto) 1.0f else 0.5f
+                btnEnviar.text = if (estaCompleto) "ENVIAR REPORTE" else "FALTAN FOTOS"
             }
         }
     }
@@ -143,10 +165,20 @@ class InspeccionActivity : AppCompatActivity() {
                 )
 
                 if (exito) {
-                    Toast.makeText(this@InspeccionActivity, "¡Reporte enviado con éxito!", Toast.LENGTH_LONG).show()
+                    withContext(Dispatchers.IO) {
+                        // 1. Borrar archivos físicos
+                        respuestasConFotos.flatMap { it.second }.forEach { if (it.exists()) it.delete() }
+                        
+                        // 2. Limpiar base de datos
+                        db.imagenDao().deleteByTarea(idTareaRecibido)
+                        db.respuestaDao().deleteByTarea(idTareaRecibido)
+                        db.tareaDao().delete(tarea)
+                    }
+                    
+                    Toast.makeText(this@InspeccionActivity, "¡Reporte enviado y memoria liberada!", Toast.LENGTH_LONG).show()
                     finish()
                 } else {
-                    Toast.makeText(this@InspeccionActivity, "Error al conectar con servidor", Toast.LENGTH_LONG).show()
+                    Toast.makeText(this@InspeccionActivity, "Fallo el envío. Datos guardados en el equipo.", Toast.LENGTH_LONG).show()
                 }
             } catch (e: Exception) {
                 Toast.makeText(this@InspeccionActivity, "Error al enviar: ${e.message}", Toast.LENGTH_LONG).show()
@@ -157,6 +189,7 @@ class InspeccionActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         cargarYMostrar()
+        actualizarEstadoBotonEnvio()
     }
 
     private fun cargarYMostrar() {

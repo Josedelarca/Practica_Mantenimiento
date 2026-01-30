@@ -68,7 +68,7 @@ class MainActivity : AppCompatActivity() {
 
         btnSync.setOnClickListener {
             if (isNetworkAvailable()) {
-                Toast.makeText(this, "Actualizando catálogos...", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Actualizando Informacion", Toast.LENGTH_SHORT).show()
                 sincronizarTodo(showToast = true)
             } else {
                 Toast.makeText(this, "Sin conexión para actualizar", Toast.LENGTH_SHORT).show()
