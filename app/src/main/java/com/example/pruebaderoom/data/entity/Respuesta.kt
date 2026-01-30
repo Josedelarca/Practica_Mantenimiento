@@ -2,25 +2,14 @@ package com.example.pruebaderoom.data.entity
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
-import androidx.room.ForeignKey
 import androidx.room.PrimaryKey
 import java.util.Date
 
-@Entity(
-    tableName = "Respuesta",
-    foreignKeys = [
-        ForeignKey(
-            entity = Pregunta::class,
-            parentColumns = ["id_pregunta"],
-            childColumns = ["id_pregunta"]
-        ),
-        ForeignKey(
-            entity = Tarea::class,
-            parentColumns = ["id_tarea"],
-            childColumns = ["id_tarea"]
-        )
-    ]
-)
+/**
+ * Entidad Respuesta: Hemos eliminado las ForeignKeys para permitir 
+ * que la estructura del formulario se borre y actualice sin errores.
+ */
+@Entity(tableName = "Respuesta")
 data class Respuesta(
     @PrimaryKey
     @ColumnInfo(name = "id_respuesta")

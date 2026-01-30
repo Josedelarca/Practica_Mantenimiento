@@ -1,6 +1,9 @@
 package com.example.pruebaderoom
 
+import android.content.Context
 import android.content.Intent
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
@@ -9,6 +12,7 @@ import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import android.widget.AutoCompleteTextView
 import android.widget.Button
+import android.widget.ImageButton
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
@@ -17,21 +21,16 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
+import androidx.room.withTransaction
 import com.example.pruebaderoom.data.AppDatabase
 import com.example.pruebaderoom.data.RetrofitClient
-import com.example.pruebaderoom.data.entity.EstadoTarea
-import com.example.pruebaderoom.data.entity.TipoMantenimiento
-import com.example.pruebaderoom.data.entity.Sitio
-import com.example.pruebaderoom.data.entity.Tarea
+import com.example.pruebaderoom.data.entity.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.*
 
-/**
- * Esta es nuestra pantalla principal. Aquí es donde el usuario elige el sitio
- * que va a inspeccionar y puede ver su ubicación en el mapa.
- */
 class MainActivity : AppCompatActivity() {
 
     private lateinit var db: AppDatabase
@@ -42,36 +41,44 @@ class MainActivity : AppCompatActivity() {
     private var sitioSeleccionado: Sitio? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Forzamos el modo claro para que la interfaz se vea siempre igual
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
         
-        // Ajustamos el diseño para que no se oculte detrás de las barras del sistema (notch, botones, etc.)
         ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
             insets
         }
 
-        // Inicializamos la base de datos y buscamos los elementos de la interfaz por su ID
         db = AppDatabase.getDatabase(this)
         txtInfo = findViewById(R.id.txtInfo)
         autoCompleteSitios = findViewById(R.id.autoCompleteCiudades)
         btnVerMapa = findViewById(R.id.btnVerMapa)
         val btnpasar = findViewById<Button>(R.id.btnpasar)
+        val btnSync = findViewById<ImageButton>(R.id.btnSync)
 
-        // Al arrancar, mostramos lo que tengamos guardado y tratamos de traer datos nuevos de internet
-        actualizarInterfaz()
-        sincronizarSitios()
+        observarDatos()
+        
+        // Sincronización automática al abrir si hay WiFi
+        if (isWifiAvailable()) {
+            sincronizarTodo(showToast = false)
+        }
 
-        // Cuando el usuario elige un sitio de la lista desplegable...
+        btnSync.setOnClickListener {
+            if (isNetworkAvailable()) {
+                Toast.makeText(this, "Actualizando catálogos...", Toast.LENGTH_SHORT).show()
+                sincronizarTodo(showToast = true)
+            } else {
+                Toast.makeText(this, "Sin conexión para actualizar", Toast.LENGTH_SHORT).show()
+            }
+        }
+
         autoCompleteSitios.onItemClickListener = AdapterView.OnItemClickListener { parent, _, position, _ ->
             val nombreSeleccionado = parent.getItemAtPosition(position) as String
             sitioSeleccionado = listaSitios.find { it.nombre == nombreSeleccionado }
             
-            // Mostramos los detalles del sitio seleccionado en pantalla
             sitioSeleccionado?.let {
                 txtInfo.text = """
                     ID SITIO: ${it.idSitio}
@@ -79,11 +86,10 @@ class MainActivity : AppCompatActivity() {
                     TEAM: ${it.teem}
                     VISITAS: ${it.visit}
                 """.trimIndent()
-                btnVerMapa.visibility = View.VISIBLE // Habilitamos el botón para ver el mapa
+                btnVerMapa.visibility = View.VISIBLE
             }
         }
 
-        // Si le da al botón de mapa, abrimos Google Maps con las coordenadas del sitio
         btnVerMapa.setOnClickListener {
             sitioSeleccionado?.let { sitio ->
                 try {
@@ -97,7 +103,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Este botón "Iniciar" crea una nueva tarea de inspección en la base de datos y nos lleva a la otra pantalla
         btnpasar.setOnClickListener {
             val sitio = sitioSeleccionado
             if (sitio == null) {
@@ -106,65 +111,124 @@ class MainActivity : AppCompatActivity() {
             }
 
             lifecycleScope.launch {
-                val nuevaTareaId = System.currentTimeMillis() // Usamos el tiempo actual como un ID único temporal
-                
-                // Preparamos los datos de la nueva tarea
-                val nuevaTarea = Tarea(
-                    idTarea = nuevaTareaId,
-                    idSitio = sitio.idSitio,
-                    idFormulario = 1L,
-                    tipoMantenimiento = TipoMantenimiento.PREVENTIVO,
-                    fecha = Date(),
-                    observacionesGenerales = "Inspección iniciada desde la App",
-                    estado = EstadoTarea.EN_PROCESO
-                )
-                
-                // Guardamos la tarea en la base de datos local (en segundo plano)
-                withContext(Dispatchers.IO) {
-                    db.tareaDao().insert(nuevaTarea)
-                }
+                try {
+                    val formularioExiste = withContext(Dispatchers.IO) { 
+                        db.formularioDao().getById(1L) != null 
+                    }
 
-                // Nos vamos a la pantalla de Inspección pasando el ID de la tarea
-                val intent = Intent(this@MainActivity, InspeccionActivity::class.java)
-                intent.putExtra("ID_TAREA", nuevaTareaId)
-                startActivity(intent)
+                    if (!formularioExiste) {
+                        if (isNetworkAvailable()) {
+                            Toast.makeText(this@MainActivity, "Descargando estructura...", Toast.LENGTH_SHORT).show()
+                            sincronizarTodo(showToast = true)
+                        } else {
+                            Toast.makeText(this@MainActivity, "Falta estructura (requiere internet una vez)", Toast.LENGTH_LONG).show()
+                        }
+                        return@launch
+                    }
+
+                    val nuevaTareaId = System.currentTimeMillis()
+                    val nuevaTarea = Tarea(
+                        idTarea = nuevaTareaId,
+                        idSitio = sitio.idSitio,
+                        idFormulario = 1L,
+                        tipoMantenimiento = TipoMantenimiento.PREVENTIVO,
+                        fecha = Date(),
+                        observacionesGenerales = "Inspección iniciada",
+                        estado = EstadoTarea.EN_PROCESO
+                    )
+
+                    withContext(Dispatchers.IO) {
+                        db.tareaDao().insert(nuevaTarea)
+                    }
+
+                    val intent = Intent(this@MainActivity, InspeccionActivity::class.java)
+                    intent.putExtra("ID_TAREA", nuevaTareaId)
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    Log.e("DATABASE", "Error al crear tarea: ${e.message}")
+                }
+            }
+        }
+    }
+
+    private fun isWifiAvailable(): Boolean {
+        val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = connectivityManager.activeNetwork ?: return false
+        val activeNetwork = connectivityManager.getNetworkCapabilities(network) ?: return false
+        return activeNetwork.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+    }
+
+    private fun isNetworkAvailable(): Boolean {
+        val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = connectivityManager.activeNetwork ?: return false
+        val activeNetwork = connectivityManager.getNetworkCapabilities(network) ?: return false
+        return activeNetwork.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+    }
+
+    private fun observarDatos() {
+        lifecycleScope.launch {
+            db.sitioDao().getAllFlow().collectLatest { sitios ->
+                listaSitios = sitios
+                val nombres = sitios.map { it.nombre }
+                withContext(Dispatchers.Main) {
+                    val adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_dropdown_item_1line, nombres)
+                    autoCompleteSitios.setAdapter(adapter)
+                }
             }
         }
     }
 
     /**
-     * Esta función se conecta al servidor para bajar la lista de sitios actualizada.
-     * Si encuentra datos nuevos, limpia lo viejo y guarda lo nuevo en el celular.
+     * ESTRATEGIA: BORRAR TODO Y REINSERTAR (Solo para catálogos maestros)
      */
-    private fun sincronizarSitios() {
+    private fun sincronizarTodo(showToast: Boolean = false) {
         lifecycleScope.launch {
             try {
-                val response = withContext(Dispatchers.IO) { RetrofitClient.instance.getSitios() }
-                val sitiosApi = response.data
-                if (sitiosApi.isNotEmpty()) {
-                    withContext(Dispatchers.IO) {
-                        val sitioDao = db.sitioDao()
-                        sitioDao.deleteAll()
-                        sitiosApi.forEach { sitioDao.insert(it) }
+                withContext(Dispatchers.IO) {
+                    // 1. Obtener datos de la API
+                    val resSitios = RetrofitClient.instance.getSitios()
+                    val resForm = RetrofitClient.instance.getFormularioCompleto(1L)
+
+                    // 2. Transacción Atómica de Sincronización
+                    db.withTransaction {
+                        // --- SINCRO DE SITIOS ---
+                        if (resSitios.data.isNotEmpty()) {
+                            db.sitioDao().deleteAll() // ESTRATEGIA: BORRAR TODO
+                            db.sitioDao().insertAll(resSitios.data) // REINSERTAR
+                        }
+
+                        // --- SINCRO DE FORMULARIO (Jerarquía) ---
+                        if (resForm.success) {
+                            val data = resForm.data
+                            
+                            // Borramos jerarquía anterior (Secciones y Preguntas)
+                            // Nota: Formulario se actualiza por REPLACE
+                            db.seccionDao().deleteByFormulario(data.id) 
+
+                            db.formularioDao().insert(Formulario(data.id, data.nombre, data.descripcion))
+                            
+                            data.secciones.forEach { s ->
+                                db.seccionDao().insert(Seccion(s.id, data.id, s.nombre))
+                                s.preguntas.forEach { p ->
+                                    db.preguntaDao().insert(Pregunta(p.id, s.id, p.descripcion, p.minImagenes, p.maxImagenes))
+                                }
+                            }
+                        }
                     }
-                    actualizarInterfaz() // Refrescamos la lista que ve el usuario
+                }
+                if (showToast) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@MainActivity, "Sincronización Exitosa", Toast.LENGTH_SHORT).show()
+                    }
                 }
             } catch (e: Exception) {
-                Log.e("API", "Error al sincronizar: ${e.message}")
+                Log.e("DEBUG_SYNC", "Error en sincro: ${e.message}")
+                if (showToast) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@MainActivity, "Error al sincronizar catálogos", Toast.LENGTH_SHORT).show()
+                    }
+                }
             }
-        }
-    }
-
-    /**
-     * Lee los sitios de la base de datos local y los pone en el buscador (Autocomplete).
-     */
-    private fun actualizarInterfaz() {
-        lifecycleScope.launch {
-            val sitiosLocal = withContext(Dispatchers.IO) { db.sitioDao().getAll() }
-            listaSitios = sitiosLocal
-            val nombres = listaSitios.map { it.nombre }
-            val adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_dropdown_item_1line, nombres)
-            autoCompleteSitios.setAdapter(adapter)
         }
     }
 }

@@ -3,6 +3,7 @@ package com.example.pruebaderoom
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
+import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -16,6 +17,7 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.room.withTransaction
 import com.example.pruebaderoom.data.AppDatabase
 import com.example.pruebaderoom.data.ReporteManager
 import com.example.pruebaderoom.data.RetrofitClient
@@ -32,7 +34,6 @@ class InspeccionActivity : AppCompatActivity() {
     private lateinit var db: AppDatabase
     private lateinit var rvPreguntas: RecyclerView
     private lateinit var txtTituloFormulario: TextView
-    private var btnVolver: ImageButton? = null
     private var idTareaRecibido: Long = -1
 
     sealed class InspeccionItem {
@@ -51,7 +52,7 @@ class InspeccionActivity : AppCompatActivity() {
         
         txtTituloFormulario = findViewById(R.id.txtTituloFormulario)
         rvPreguntas = findViewById(R.id.rvPreguntas)
-        btnVolver = findViewById(R.id.btnVolverInicio)
+        val btnVolver = findViewById<ImageButton>(R.id.btnVolverInicio)
         val btnEnviar = findViewById<Button>(R.id.btnEnviarReporte)
         
         rvPreguntas.layoutManager = LinearLayoutManager(this)
@@ -61,6 +62,46 @@ class InspeccionActivity : AppCompatActivity() {
 
         btnEnviar.setOnClickListener {
             enviarTodoAlServidor()
+        }
+    }
+
+    private fun sincronizarFormulario(id: Long) {
+        lifecycleScope.launch {
+            try {
+                val response = withContext(Dispatchers.IO) { RetrofitClient.instance.getFormularioCompleto(id) }
+
+                if (response.success) {
+                    val data = response.data
+                    
+                    // Preparamos las listas de entidades y sus IDs para la limpieza
+                    val seccionesApi = data.secciones.map { s -> Seccion(s.id, data.id, s.nombre) }
+                    val idsSeccionesApi = seccionesApi.map { it.idSeccion }
+                    
+                    val preguntasApi = data.secciones.flatMap { s -> 
+                        s.preguntas.map { p -> Pregunta(p.id, s.id, p.descripcion, p.minImagenes, p.maxImagenes) }
+                    }
+                    val idsPreguntasApi = preguntasApi.map { it.idPregunta }
+
+                    // Operación atómica de actualización y limpieza
+                    db.withTransaction {
+                        // 1. Actualizar Formulario
+                        db.formularioDao().insert(Formulario(data.id, data.nombre, data.descripcion))
+
+                        // 2. Limpiar datos que ya no existen en la API (Detectamos eliminaciones)
+                        db.seccionDao().deleteOldSecciones(data.id, idsSeccionesApi)
+                        db.preguntaDao().deleteOldPreguntas(data.id, idsPreguntasApi)
+
+                        // 3. Sincronizar (Insertar nuevos o Actualizar existentes)
+                        db.seccionDao().upsertAll(seccionesApi)
+                        db.preguntaDao().upsertAll(preguntasApi)
+                    }
+                    
+                    cargarYMostrar()
+                }
+            } catch (e: Exception) {
+                Log.e("API", "Error al sincronizar formulario: ${e.message}")
+                cargarYMostrar()
+            }
         }
     }
 
@@ -92,19 +133,21 @@ class InspeccionActivity : AppCompatActivity() {
                 }
 
                 val manager = ReporteManager(RetrofitClient.instance)
-                
                 Toast.makeText(this@InspeccionActivity, "Enviando reporte...", Toast.LENGTH_SHORT).show()
                 
-                manager.enviarReporteCompleto(
-                    sitioId = tarea.idSitio.toLongOrNull() ?: 1L,
+                val exito = manager.enviarReporteCompleto(
+                    sitioId = tarea.idSitio,
                     formularioId = tarea.idFormulario,
                     observaciones = tarea.observacionesGenerales,
                     respuestasConFotos = respuestasConFotos
                 )
 
-                Toast.makeText(this@InspeccionActivity, "¡Reporte enviado con éxito!", Toast.LENGTH_LONG).show()
-                finish()
-
+                if (exito) {
+                    Toast.makeText(this@InspeccionActivity, "¡Reporte enviado con éxito!", Toast.LENGTH_LONG).show()
+                    finish()
+                } else {
+                    Toast.makeText(this@InspeccionActivity, "Error al conectar con servidor", Toast.LENGTH_LONG).show()
+                }
             } catch (e: Exception) {
                 Toast.makeText(this@InspeccionActivity, "Error al enviar: ${e.message}", Toast.LENGTH_LONG).show()
             }
@@ -114,29 +157,6 @@ class InspeccionActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         cargarYMostrar()
-    }
-
-    private fun sincronizarFormulario(id: Long) {
-        lifecycleScope.launch {
-            try {
-                val response = withContext(Dispatchers.IO) { RetrofitClient.instance.getFormularioCompleto(id) }
-                if (response.success) {
-                    withContext(Dispatchers.IO) {
-                        val data = response.data
-                        db.formularioDao().insert(Formulario(data.id, data.nombre, data.descripcion))
-                        data.secciones.forEach { s ->
-                            db.seccionDao().insert(Seccion(s.id, data.id, s.nombre))
-                            s.preguntas.forEach { p ->
-                                db.preguntaDao().insert(Pregunta(p.id, s.id, p.descripcion, p.minImagenes, p.maxImagenes))
-                            }
-                        }
-                    }
-                    cargarYMostrar()
-                }
-            } catch (e: Exception) {
-                cargarYMostrar()
-            }
-        }
     }
 
     private fun cargarYMostrar() {
@@ -152,9 +172,9 @@ class InspeccionActivity : AppCompatActivity() {
                 list
             }
             rvPreguntas.adapter = InspeccionAdapter(hibrido, idTareaRecibido, db)
-            
+
             if (hibrido.isNotEmpty()) {
-                val info = withContext(Dispatchers.IO) { db.formularioDao().getAll().firstOrNull() }
+                val info = withContext(Dispatchers.IO) { db.formularioDao().getById(1L) }
                 txtTituloFormulario.text = info?.nombre ?: "Inspección"
             }
         }
@@ -187,19 +207,19 @@ class InspeccionActivity : AppCompatActivity() {
                 
                 (holder.itemView.context as InspeccionActivity).lifecycleScope.launch {
                     val respuesta = withContext(Dispatchers.IO) {
-                        database.respuestaDao().getAll().find { 
-                            it.idPregunta == item.pregunta.idPregunta && it.idTarea == idTarea 
+                        database.respuestaDao().getAll().find {
+                            it.idPregunta == item.pregunta.idPregunta && it.idTarea == idTarea
                         }
                     }
 
                     when {
                         respuesta?.texto == "Finalizado" -> {
-                            holder.txtDesc.setTextColor(Color.parseColor("#43A047")) 
+                            holder.txtDesc.setTextColor(Color.parseColor("#43A047"))
                             holder.btnCamara.text = "EDITAR"
                             holder.btnCamara.setTextColor(Color.parseColor("#43A047"))
                         }
                         respuesta?.texto == "En proceso" -> {
-                            holder.txtDesc.setTextColor(Color.parseColor("#E53935")) 
+                            holder.txtDesc.setTextColor(Color.parseColor("#E53935"))
                             holder.btnCamara.text = "INCOMPLETA"
                             holder.btnCamara.setTextColor(Color.parseColor("#E53935"))
                         }
@@ -212,7 +232,7 @@ class InspeccionActivity : AppCompatActivity() {
                 }
 
                 holder.btnCamara.setOnClickListener {
-                    val intent = Intent(holder.itemView.context, Respuesta::class.java)
+                    val intent = Intent(holder.itemView.context, com.example.pruebaderoom.Respuesta::class.java)
                     intent.putExtra("ID_PREGUNTA", item.pregunta.idPregunta)
                     intent.putExtra("ID_TAREA", idTarea) 
                     holder.itemView.context.startActivity(intent)

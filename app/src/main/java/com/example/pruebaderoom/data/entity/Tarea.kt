@@ -2,49 +2,36 @@ package com.example.pruebaderoom.data.entity
 
 import androidx.room.ColumnInfo
 import androidx.room.Entity
-import androidx.room.ForeignKey
 import androidx.room.PrimaryKey
 import java.util.Date
 
 /**
  * Una "Tarea" representa una visita de mantenimiento específica.
- * Vincula un Sitio con un Formulario y guarda cuándo y cómo se hizo la inspección.
+ * Hemos eliminado la restricción estricta de ForeignKey para permitir 
+ * que el catálogo de Sitios y Formularios se actualice (Borrar/Insertar) 
+ * sin borrar el trabajo del técnico.
  */
-@Entity(
-    tableName = "Tarea",
-    foreignKeys = [
-        ForeignKey(
-            entity = Sitio::class,
-            parentColumns = ["id_sitio"],
-            childColumns = ["id_sitio"]
-        ),
-        ForeignKey(
-            entity = Formulario::class,
-            parentColumns = ["id_formulario"],
-            childColumns = ["id_formulario"]
-        )
-    ]
-)
+@Entity(tableName = "Tarea")
 data class Tarea(
     @PrimaryKey
     @ColumnInfo(name = "id_tarea")
-    val idTarea: Long, // ID único de la inspección (usamos el tiempo actual en milisegundos)
+    val idTarea: Long, 
     
     @ColumnInfo(name = "id_sitio")
-    val idSitio: String, // A qué sitio fuimos
+    val idSitio: Long, 
     
     @ColumnInfo(name = "id_formulario")
-    val idFormulario: Long, // Qué cuestionario usamos
+    val idFormulario: Long, 
     
     @ColumnInfo(name = "tipo_mantenimiento")
-    val tipoMantenimiento: TipoMantenimiento, // Si fue preventivo, correctivo, etc.
+    val tipoMantenimiento: TipoMantenimiento, 
     
     @ColumnInfo(name = "fecha")
-    val fecha: Date, // Día y hora de la visita
+    val fecha: Date, 
     
     @ColumnInfo(name = "observaciones_generales")
-    val observacionesGenerales: String, // Comentarios adicionales del técnico
+    val observacionesGenerales: String, 
     
     @ColumnInfo(name = "estado")
-    val estado: EstadoTarea // En qué paso va la tarea (pendiente, en proceso, terminada)
+    val estado: EstadoTarea
 )

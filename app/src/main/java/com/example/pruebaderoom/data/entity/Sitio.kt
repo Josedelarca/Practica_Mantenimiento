@@ -5,28 +5,24 @@ import androidx.room.Entity
 import androidx.room.PrimaryKey
 import com.google.gson.annotations.SerializedName
 
-/**
- * Representa un lugar físico (como una antena o torre) donde se realiza el mantenimiento.
- * Esta clase sirve tanto para la base de datos local como para entender lo que viene del servidor.
- */
 @Entity(tableName = "Sitio")
 data class Sitio(
     @PrimaryKey
     @ColumnInfo(name = "id_sitio")
     @SerializedName("id")
-    val idSitio: String, // ID único que le da el sistema
+    val idSitio: Long, // Cambiado a Long para coincidir con el Int/BigInt de la API
     
     @ColumnInfo(name = "nombre")
     @SerializedName("nombre")
-    val nombre: String, // Nombre común del sitio
+    val nombre: String,
     
     @ColumnInfo(name = "teem")
     @SerializedName("teem")
-    val teem: String, // Equipo encargado del sitio
+    val teem: String,
     
     @ColumnInfo(name = "site_morfology")
     @SerializedName("site_morfology")
-    val siteMorfology: String, // Tipo de estructura actual
+    val siteMorfology: String,
     
     @ColumnInfo(name = "new_morfology")
     @SerializedName("new_morfology")
@@ -34,11 +30,11 @@ data class Sitio(
 
     @ColumnInfo(name = "visit")
     @SerializedName("visit")
-    val visit: Int, // Número de visitas o prioridad
+    val visit: Int,
 
     @ColumnInfo(name = "latitud")
     @SerializedName("latitud")
-    val latitud: Double, // Ubicación para el mapa
+    val latitud: Double,
 
     @ColumnInfo(name = "longitud")
     @SerializedName("longitud")

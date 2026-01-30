@@ -4,28 +4,30 @@ import androidx.room.Dao
 import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
+import androidx.room.Upsert
 import com.example.pruebaderoom.data.entity.Pregunta
 
-/**
- * Esta interfaz define las operaciones para la tabla de "Preguntas".
- * Aquí controlamos qué se pregunta en cada sección del formulario.
- */
 @Dao
 interface PreguntaDao {
-    
-    // Obtiene todas las preguntas configuradas en el sistema
+
     @Query("SELECT * FROM Preguntas")
     suspend fun getAll(): List<Pregunta>
 
-    // Guarda una nueva pregunta o actualiza una existente
+    @Upsert
+    suspend fun upsertAll(preguntas: List<Pregunta>)
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(pregunta: Pregunta)
 
-    // Trae únicamente las preguntas que pertenecen a una sección específica
     @Query("SELECT * FROM Preguntas WHERE id_seccion = :idSeccion")
     suspend fun getBySeccion(idSeccion: Long): List<Pregunta>
 
-    // Busca el detalle de una pregunta usando su ID único
     @Query("SELECT * FROM Preguntas WHERE id_pregunta = :id")
     suspend fun getById(id: Long): Pregunta?
+
+    @Query("DELETE FROM Preguntas WHERE id_seccion IN (SELECT id_seccion FROM Seccion WHERE id_formulario = :idForm) AND id_pregunta NOT IN (:idsApi)")
+    suspend fun deleteOldPreguntas(idForm: Long, idsApi: List<Long>)
+
+    @Query("DELETE FROM Preguntas WHERE id_seccion IN (SELECT id_seccion FROM Seccion WHERE id_formulario = :idFormulario)")
+    suspend fun deleteByFormulario(idFormulario: Long)
 }
