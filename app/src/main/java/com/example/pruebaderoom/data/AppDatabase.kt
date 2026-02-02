@@ -19,7 +19,7 @@ import com.example.pruebaderoom.data.entity.*
         Respuesta::class,
         Imagen::class
     ],
-    version = 6, // Subimos a 6 para limpiar todas las restricciones de ForeignKeys
+    version = 7, // Subimos a 7
     exportSchema = false
 )
 @TypeConverters(Converters::class)

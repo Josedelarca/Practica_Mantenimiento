@@ -225,7 +225,7 @@ class MainActivity : AppCompatActivity() {
                 Log.e("DEBUG_SYNC", "Error en sincro: ${e.message}")
                 if (showToast) {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Error al sincronizar catálogos", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MainActivity, "Error en conectar con el servidor", Toast.LENGTH_SHORT).show()
                     }
                 }
             }

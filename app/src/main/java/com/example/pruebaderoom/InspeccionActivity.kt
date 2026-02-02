@@ -18,17 +18,16 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.room.withTransaction
+import androidx.work.*
 import com.example.pruebaderoom.data.AppDatabase
-import com.example.pruebaderoom.data.ReporteManager
+import com.example.pruebaderoom.data.ReporteWorker
 import com.example.pruebaderoom.data.RetrofitClient
 import com.example.pruebaderoom.data.entity.Formulario
 import com.example.pruebaderoom.data.entity.Pregunta
 import com.example.pruebaderoom.data.entity.Seccion
-import com.example.pruebaderoom.data.entity.Respuesta as RespuestaEntity
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
 
 class InspeccionActivity : AppCompatActivity() {
 
@@ -63,7 +62,7 @@ class InspeccionActivity : AppCompatActivity() {
         sincronizarFormulario(1L)
 
         btnEnviar.setOnClickListener {
-            enviarTodoAlServidor()
+            programarSincronizacionWorker()
         }
         
         actualizarEstadoBotonEnvio()
@@ -76,10 +75,8 @@ class InspeccionActivity : AppCompatActivity() {
 
                 if (response.success) {
                     val data = response.data
-                    
                     val seccionesApi = data.secciones.map { s -> Seccion(s.id, data.id, s.nombre) }
                     val idsSeccionesApi = seccionesApi.map { it.idSeccion }
-                    
                     val preguntasApi = data.secciones.flatMap { s -> 
                         s.preguntas.map { p -> Pregunta(p.id, s.id, p.descripcion, p.minImagenes, p.maxImagenes) }
                     }
@@ -92,7 +89,6 @@ class InspeccionActivity : AppCompatActivity() {
                         db.seccionDao().upsertAll(seccionesApi)
                         db.preguntaDao().upsertAll(preguntasApi)
                     }
-                    
                     cargarYMostrar()
                     actualizarEstadoBotonEnvio()
                 }
@@ -127,63 +123,30 @@ class InspeccionActivity : AppCompatActivity() {
         }
     }
 
-    private fun enviarTodoAlServidor() {
-        lifecycleScope.launch {
-            try {
-                val tarea = withContext(Dispatchers.IO) { db.tareaDao().getById(idTareaRecibido) }
-                if (tarea == null) return@launch
+    private fun programarSincronizacionWorker() {
+        val data = Data.Builder()
+            .putLong("ID_TAREA", idTareaRecibido)
+            .build()
 
-                val respuestasConFotos = withContext(Dispatchers.IO) {
-                    val lista = mutableListOf<Pair<ReporteManager.RespuestaJson, List<File>>>()
-                    val respuestasDB = db.respuestaDao().getByTarea(idTareaRecibido)
-                    
-                    respuestasDB.forEach { r ->
-                        val fotos = db.imagenDao().getByRespuesta(r.idRespuesta).map { File(it.rutaArchivo) }
-                        val respJson = ReporteManager.RespuestaJson(
-                            temp_id = "r${r.idRespuesta}",
-                            pregunta_id = r.idPregunta,
-                            texto_respuesta = if (r.texto == "Finalizado") "Completado correctamente" else r.texto
-                        )
-                        lista.add(Pair(respJson, fotos))
-                    }
-                    lista
-                }
+        val constraints = Constraints.Builder()
+            .setRequiredNetworkType(NetworkType.CONNECTED)
+            .build()
 
-                if (respuestasConFotos.isEmpty()) {
-                    Toast.makeText(this@InspeccionActivity, "No hay respuestas para enviar", Toast.LENGTH_SHORT).show()
-                    return@launch
-                }
+        val syncWorkRequest = OneTimeWorkRequestBuilder<ReporteWorker>()
+            .setInputData(data)
+            .setConstraints(constraints)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, java.util.concurrent.TimeUnit.SECONDS)
+            .build()
 
-                val manager = ReporteManager(RetrofitClient.instance)
-                Toast.makeText(this@InspeccionActivity, "Enviando reporte...", Toast.LENGTH_SHORT).show()
-                
-                val exito = manager.enviarReporteCompleto(
-                    sitioId = tarea.idSitio,
-                    formularioId = tarea.idFormulario,
-                    observaciones = tarea.observacionesGenerales,
-                    respuestasConFotos = respuestasConFotos
-                )
+        WorkManager.getInstance(this).enqueueUniqueWork(
+            "sync_tarea_$idTareaRecibido",
+            ExistingWorkPolicy.KEEP,
+            syncWorkRequest
+        )
 
-                if (exito) {
-                    withContext(Dispatchers.IO) {
-                        // 1. Borrar archivos físicos
-                        respuestasConFotos.flatMap { it.second }.forEach { if (it.exists()) it.delete() }
-                        
-                        // 2. Limpiar base de datos
-                        db.imagenDao().deleteByTarea(idTareaRecibido)
-                        db.respuestaDao().deleteByTarea(idTareaRecibido)
-                        db.tareaDao().delete(tarea)
-                    }
-                    
-                    Toast.makeText(this@InspeccionActivity, "¡Reporte enviado y memoria liberada!", Toast.LENGTH_LONG).show()
-                    finish()
-                } else {
-                    Toast.makeText(this@InspeccionActivity, "Fallo el envío. Datos guardados en el equipo.", Toast.LENGTH_LONG).show()
-                }
-            } catch (e: Exception) {
-                Toast.makeText(this@InspeccionActivity, "Error al enviar: ${e.message}", Toast.LENGTH_LONG).show()
-            }
-        }
+        Toast.makeText(this, "Envio iniciado en segundo plano", Toast.LENGTH_LONG).show()
+        // IMPORTANTE: NO borramos nada aquí. El ReporteWorker lo hará al terminar con éxito.
+        finish()
     }
 
     override fun onResume() {

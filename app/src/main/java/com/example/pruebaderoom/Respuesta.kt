@@ -188,7 +188,7 @@ class Respuesta : AppCompatActivity() {
         val canvas = Canvas(mutableBitmap)
         val paint = Paint().apply {
             color = Color.WHITE
-            textSize = mutableBitmap.height / 45f 
+            textSize = mutableBitmap.height / 45f
             isAntiAlias = true
             setShadowLayer(3f, 2f, 2f, Color.BLACK)
         }
@@ -258,8 +258,8 @@ class Respuesta : AppCompatActivity() {
             try {
                 val nuevaRuta = withContext(Dispatchers.IO) {
                     if (idRespuestaActual == -1L) {
-                        val respuestaExistente = db.respuestaDao().getAll().find { 
-                            it.idPregunta == idPreguntaRecibido && it.idTarea == idTareaRecibido 
+                        val respuestaExistente = db.respuestaDao().getAll().find {
+                            it.idPregunta == idPreguntaRecibido && it.idTarea == idTareaRecibido
                         }
                         if (respuestaExistente == null) {
                             idRespuestaActual = System.currentTimeMillis()
@@ -273,12 +273,12 @@ class Respuesta : AppCompatActivity() {
                     val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
                     val nombreSitioLimpio = (sitioActual?.nombre ?: "SITIO").replace(" ", "_")
                     val nombreArchivo = "${nombreSitioLimpio}_${timeStamp}_${UUID.randomUUID().toString().take(4)}.jpg"
-                    
+
                     val file = File(filesDir, nombreArchivo)
                     val out = FileOutputStream(file)
                     bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
                     out.close()
-                    
+
                     db.imagenDao().insert(Imagen(System.currentTimeMillis(), idRespuestaActual, file.absolutePath, "HD", Date()))
                     file.absolutePath
                 }

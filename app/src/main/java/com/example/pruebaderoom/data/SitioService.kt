@@ -7,9 +7,6 @@ import okhttp3.RequestBody
 import retrofit2.Response
 import retrofit2.http.*
 
-/**
- * Esta interfaz define las "preguntas" que le podemos hacer al servidor.
- */
 interface SitioService {
     
     @GET("api/sitios")
@@ -18,11 +15,20 @@ interface SitioService {
     @GET("api/formularios/{id}")
     suspend fun getFormularioCompleto(@Path("id") id: Long): FormularioFullResponse
 
-    /**
-     * Envía el reporte completo al servidor Laravel.
-     * 1. Un campo "data" con el JSON de la inspección.
-     * 2. Múltiples partes para las imágenes usando el formato imagenes_{temp_id}[]
-     */
+    // FASE 1: Crear Tarea y obtener mapeo de IDs
+    @POST("api/tareas")
+    suspend fun crearTarea(@Body data: SyncTareaRequest): Response<SyncTareaResponse>
+
+    // FASE 2: Subir imagen individual
+    @Multipart
+    @POST("api/tareas/{tarea_id}/imagenes")
+    suspend fun subirImagen(
+        @Path("tarea_id") tareaId: Long,
+        @Part("respuesta_id") respuestaId: RequestBody,
+        @Part("uuid") uuid: RequestBody,
+        @Part imagen: MultipartBody.Part
+    ): Response<Unit>
+
     @Multipart
     @POST("api/tareas")
     suspend fun enviarReporte(
@@ -30,6 +36,35 @@ interface SitioService {
         @Part imagenes: List<MultipartBody.Part>
     ): Response<Unit>
 }
+
+// Data Classes para el flujo de sincronización de 2 pasos
+data class SyncTareaRequest(
+    val sitio_id: Long,
+    val formulario_id: Long,
+    val fecha: String,
+    val tipo_mantenimiento: String,
+    val respuestas: List<SyncRespuestaRequest>
+)
+
+data class SyncRespuestaRequest(
+    val pregunta_id: Long,
+    val texto_respuesta: String?
+)
+
+data class SyncTareaResponse(
+    val success: Boolean,
+    val data: TareaMappingData
+)
+
+data class TareaMappingData(
+    val tarea_id: Long,
+    val respuestas: List<RespuestaMapping>
+)
+
+data class RespuestaMapping(
+    val pregunta_id: Long,
+    val respuesta_id: Long // ID del servidor
+)
 
 data class SitioResponse(
     @SerializedName("data")

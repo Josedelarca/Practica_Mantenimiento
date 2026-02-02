@@ -17,6 +17,9 @@ interface ImagenDao {
     @Query("SELECT * FROM Imagen WHERE id_respuesta = :idRespuesta")
     suspend fun getByRespuesta(idRespuesta: Long): List<Imagen>
 
+    @Query("UPDATE Imagen SET is_synced = :synced WHERE id_imagen = :id")
+    suspend fun updateSyncStatus(id: Long, synced: Boolean)
+
     @Query("DELETE FROM Imagen WHERE id_respuesta IN (SELECT id_respuesta FROM Respuesta WHERE id_tarea = :idTarea)")
     suspend fun deleteByTarea(idTarea: Long)
 
