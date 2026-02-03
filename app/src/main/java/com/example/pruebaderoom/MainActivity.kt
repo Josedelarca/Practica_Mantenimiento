@@ -7,28 +7,28 @@ import android.net.NetworkCapabilities
 import android.net.Uri
 import android.os.Bundle
 import android.util.Log
+import android.view.Gravity
 import android.view.View
-import android.widget.AdapterView
-import android.widget.ArrayAdapter
-import android.widget.AutoCompleteTextView
-import android.widget.Button
-import android.widget.ImageButton
-import android.widget.TextView
-import android.widget.Toast
+import android.widget.*
 import androidx.activity.enableEdgeToEdge
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.room.withTransaction
+import androidx.work.WorkInfo
+import androidx.work.WorkManager
 import com.example.pruebaderoom.data.AppDatabase
 import com.example.pruebaderoom.data.RetrofitClient
 import com.example.pruebaderoom.data.entity.*
+import com.google.android.material.button.MaterialButton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.*
 
 class MainActivity : AppCompatActivity() {
@@ -37,6 +37,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var txtInfo: TextView
     private lateinit var autoCompleteSitios: AutoCompleteTextView
     private lateinit var btnVerMapa: Button
+    private lateinit var layoutPendientes: LinearLayout
+    private lateinit var containerPendientes: LinearLayout
+    private lateinit var cardSyncStatus: View
+    
     private var listaSitios: List<Sitio> = emptyList()
     private var sitioSeleccionado: Sitio? = null
 
@@ -56,12 +60,16 @@ class MainActivity : AppCompatActivity() {
         txtInfo = findViewById(R.id.txtInfo)
         autoCompleteSitios = findViewById(R.id.autoCompleteCiudades)
         btnVerMapa = findViewById(R.id.btnVerMapa)
+        layoutPendientes = findViewById(R.id.layoutPendientes)
+        containerPendientes = findViewById(R.id.containerBotonesPendientes)
+        cardSyncStatus = findViewById(R.id.cardSyncStatus)
+        
         val btnpasar = findViewById<Button>(R.id.btnpasar)
         val btnSync = findViewById<ImageButton>(R.id.btnSync)
 
         observarDatos()
+        observarSincronizacionGlobal()
         
-        // Sincronización automática al abrir si hay WiFi
         if (isWifiAvailable()) {
             sincronizarTodo(showToast = false)
         }
@@ -70,22 +78,14 @@ class MainActivity : AppCompatActivity() {
             if (isNetworkAvailable()) {
                 Toast.makeText(this, "Actualizando Informacion", Toast.LENGTH_SHORT).show()
                 sincronizarTodo(showToast = true)
-            } else {
-                Toast.makeText(this, "Sin conexión para actualizar", Toast.LENGTH_SHORT).show()
             }
         }
 
         autoCompleteSitios.onItemClickListener = AdapterView.OnItemClickListener { parent, _, position, _ ->
             val nombreSeleccionado = parent.getItemAtPosition(position) as String
             sitioSeleccionado = listaSitios.find { it.nombre == nombreSeleccionado }
-            
             sitioSeleccionado?.let {
-                txtInfo.text = """
-                    ID SITIO: ${it.idSitio}
-                    NOMBRE: ${it.nombre}
-                    TEAM: ${it.teem}
-                    VISITAS: ${it.visit}
-                """.trimIndent()
+                actualizarInformacionSitio(it)
                 btnVerMapa.visibility = View.VISIBLE
             }
         }
@@ -94,9 +94,7 @@ class MainActivity : AppCompatActivity() {
             sitioSeleccionado?.let { sitio ->
                 try {
                     val uri = Uri.parse("geo:${sitio.latitud},${sitio.longitud}?q=${sitio.latitud},${sitio.longitud}(${sitio.nombre})")
-                    val intent = Intent(Intent.ACTION_VIEW, uri)
-                    intent.setPackage("com.google.android.apps.maps")
-                    startActivity(intent)
+                    startActivity(Intent(Intent.ACTION_VIEW, uri).setPackage("com.google.android.apps.maps"))
                 } catch (e: Exception) {
                     Toast.makeText(this, "Google Maps no instalado", Toast.LENGTH_SHORT).show()
                 }
@@ -104,131 +102,184 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnpasar.setOnClickListener {
-            val sitio = sitioSeleccionado
-            if (sitio == null) {
-                Toast.makeText(this, "Selecciona un sitio primero", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
+            sitioSeleccionado?.let { sitio ->
+                lifecycleScope.launch {
+                    val tareaExistente = withContext(Dispatchers.IO) {
+                        db.tareaDao().getTareaActivaPorSitio(sitio.idSitio)
+                    }
+                    if (tareaExistente != null) {
+                        irAInspeccion(tareaExistente.idTarea)
+                    } else {
+                        crearNuevaTarea(sitio)
+                    }
+                }
+            } ?: Toast.makeText(this, "Selecciona un sitio", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        cargarTareasPendientes() 
+    }
+
+    private fun cargarTareasPendientes() {
+        lifecycleScope.launch {
+            val pendientes = withContext(Dispatchers.IO) {
+                db.tareaDao().getTareasPorEstado(EstadoTarea.EN_PROCESO)
             }
 
-            lifecycleScope.launch {
-                try {
-                    val formularioExiste = withContext(Dispatchers.IO) { 
-                        db.formularioDao().getById(1L) != null 
-                    }
-
-                    if (!formularioExiste) {
-                        if (isNetworkAvailable()) {
-                            Toast.makeText(this@MainActivity, "Descargando estructura...", Toast.LENGTH_SHORT).show()
-                            sincronizarTodo(showToast = true)
-                        } else {
-                            Toast.makeText(this@MainActivity, "Falta estructura (requiere internet una vez)", Toast.LENGTH_LONG).show()
+            containerPendientes.removeAllViews()
+            if (pendientes.isEmpty()) {
+                layoutPendientes.visibility = View.GONE
+            } else {
+                layoutPendientes.visibility = View.VISIBLE
+                pendientes.forEach { tarea ->
+                    val sitio = withContext(Dispatchers.IO) { db.sitioDao().getById(tarea.idSitio) }
+                    sitio?.let { s ->
+                        val row = LinearLayout(this@MainActivity).apply {
+                            orientation = LinearLayout.HORIZONTAL
+                            gravity = Gravity.CENTER_VERTICAL
+                            setPadding(16, 8, 16, 8)
+                            layoutParams = LinearLayout.LayoutParams(
+                                LinearLayout.LayoutParams.MATCH_PARENT,
+                                LinearLayout.LayoutParams.WRAP_CONTENT
+                            )
                         }
-                        return@launch
+
+                        val btnRetomar = MaterialButton(this@MainActivity, null, com.google.android.material.R.attr.materialButtonStyle).apply {
+                            text = "RETOMAR: ${s.nombre}"
+                            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+                            setIconResource(android.R.drawable.ic_menu_edit)
+                            setOnClickListener { irAInspeccion(tarea.idTarea) }
+                        }
+
+                        val btnEliminar = ImageButton(this@MainActivity).apply {
+                            setImageResource(android.R.drawable.ic_menu_delete)
+                            background = null
+                            contentDescription = "Eliminar tarea"
+                            setOnClickListener { confirmarEliminacion(tarea, s.nombre) }
+                        }
+
+                        row.addView(btnRetomar)
+                        row.addView(btnEliminar)
+                        containerPendientes.addView(row)
                     }
-
-                    val nuevaTareaId = System.currentTimeMillis()
-                    val nuevaTarea = Tarea(
-                        idTarea = nuevaTareaId,
-                        idSitio = sitio.idSitio,
-                        idFormulario = 1L,
-                        tipoMantenimiento = TipoMantenimiento.PREVENTIVO,
-                        fecha = Date(),
-                        observacionesGenerales = "Inspección iniciada",
-                        estado = EstadoTarea.EN_PROCESO
-                    )
-
-                    withContext(Dispatchers.IO) {
-                        db.tareaDao().insert(nuevaTarea)
-                    }
-
-                    val intent = Intent(this@MainActivity, InspeccionActivity::class.java)
-                    intent.putExtra("ID_TAREA", nuevaTareaId)
-                    startActivity(intent)
-                } catch (e: Exception) {
-                    Log.e("DATABASE", "Error al crear tarea: ${e.message}")
                 }
             }
         }
     }
 
+    private fun confirmarEliminacion(tarea: Tarea, nombreSitio: String) {
+        AlertDialog.Builder(this)
+            .setTitle("Eliminar Inspección")
+            .setMessage("¿Estás seguro de eliminar la inspección de $nombreSitio? Se borrarán todas las fotos tomadas.")
+            .setPositiveButton("ELIMINAR") { _, _ -> eliminarTareaFisicamente(tarea) }
+            .setNegativeButton("CANCELAR", null)
+            .show()
+    }
+
+    private fun eliminarTareaFisicamente(tarea: Tarea) {
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                val respuestas = db.respuestaDao().getByTarea(tarea.idTarea)
+                respuestas.forEach { r ->
+                    val fotos = db.imagenDao().getByRespuesta(r.idRespuesta)
+                    fotos.forEach { img ->
+                        val file = File(img.rutaArchivo)
+                        if (file.exists()) file.delete()
+                    }
+                    db.imagenDao().deleteByRespuesta(r.idRespuesta)
+                }
+                db.respuestaDao().deleteByTarea(tarea.idTarea)
+                db.tareaDao().delete(tarea)
+            }
+            Toast.makeText(this@MainActivity, "Inspección eliminada", Toast.LENGTH_SHORT).show()
+            cargarTareasPendientes()
+        }
+    }
+
+    private fun crearNuevaTarea(sitio: Sitio) {
+        lifecycleScope.launch {
+            val nuevaTareaId = System.currentTimeMillis()
+            val nuevaTarea = Tarea(nuevaTareaId, sitio.idSitio, 1L, TipoMantenimiento.PREVENTIVO, Date(), "En curso", EstadoTarea.EN_PROCESO)
+            withContext(Dispatchers.IO) { db.tareaDao().insert(nuevaTarea) }
+            irAInspeccion(nuevaTareaId)
+        }
+    }
+
+    private fun actualizarInformacionSitio(sitio: Sitio) {
+        lifecycleScope.launch {
+            val tareaActiva = withContext(Dispatchers.IO) { db.tareaDao().getTareaActivaPorSitio(sitio.idSitio) }
+            val status = if (tareaActiva != null) "PENDIENTE" else "LIBRE"
+            txtInfo.text = """
+                ID SITIO: ${sitio.idSitio}
+                NOMBRE: ${sitio.nombre}
+                TEAM: ${sitio.teem}
+                VISITAS: ${sitio.visit}
+            """.trimIndent()
+        }
+    }
+
+    private fun observarSincronizacionGlobal() {
+        WorkManager.getInstance(this).getWorkInfosByTagLiveData("ReporteWorker").observe(this) { infos ->
+            val subiendo = infos != null && infos.any { it.state == WorkInfo.State.RUNNING }
+            cardSyncStatus.visibility = if (subiendo) View.VISIBLE else View.GONE
+            if (subiendo) {
+                cargarTareasPendientes()
+            }
+        }
+    }
+
+    private fun irAInspeccion(idTarea: Long) {
+        startActivity(Intent(this, InspeccionActivity::class.java).putExtra("ID_TAREA", idTarea))
+    }
+
     private fun isWifiAvailable(): Boolean {
-        val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = connectivityManager.activeNetwork ?: return false
-        val activeNetwork = connectivityManager.getNetworkCapabilities(network) ?: return false
-        return activeNetwork.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+        return caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
     }
 
     private fun isNetworkAvailable(): Boolean {
-        val connectivityManager = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val network = connectivityManager.activeNetwork ?: return false
-        val activeNetwork = connectivityManager.getNetworkCapabilities(network) ?: return false
-        return activeNetwork.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val caps = cm.getNetworkCapabilities(cm.activeNetwork)
+        return caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
     }
 
     private fun observarDatos() {
         lifecycleScope.launch {
             db.sitioDao().getAllFlow().collectLatest { sitios ->
                 listaSitios = sitios
-                val nombres = sitios.map { it.nombre }
-                withContext(Dispatchers.Main) {
-                    val adapter = ArrayAdapter(this@MainActivity, android.R.layout.simple_dropdown_item_1line, nombres)
-                    autoCompleteSitios.setAdapter(adapter)
-                }
+                autoCompleteSitios.setAdapter(ArrayAdapter(this@MainActivity, android.R.layout.simple_dropdown_item_1line, sitios.map { it.nombre }))
             }
         }
     }
 
-    /**
-     * ESTRATEGIA: BORRAR TODO Y REINSERTAR (Solo para catálogos maestros)
-     */
-    private fun sincronizarTodo(showToast: Boolean = false) {
+    private fun sincronizarTodo(showToast: Boolean) {
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
-                    // 1. Obtener datos de la API
                     val resSitios = RetrofitClient.instance.getSitios()
                     val resForm = RetrofitClient.instance.getFormularioCompleto(1L)
-
-                    // 2. Transacción Atómica de Sincronización
                     db.withTransaction {
-                        // --- SINCRO DE SITIOS ---
                         if (resSitios.data.isNotEmpty()) {
-                            db.sitioDao().deleteAll() // ESTRATEGIA: BORRAR TODO
-                            db.sitioDao().insertAll(resSitios.data) // REINSERTAR
+                            db.sitioDao().deleteAll()
+                            db.sitioDao().insertAll(resSitios.data)
                         }
-
-                        // --- SINCRO DE FORMULARIO (Jerarquía) ---
                         if (resForm.success) {
                             val data = resForm.data
-                            
-                            // Borramos jerarquía anterior (Secciones y Preguntas)
-                            // Nota: Formulario se actualiza por REPLACE
-                            db.seccionDao().deleteByFormulario(data.id) 
-
+                            db.seccionDao().deleteByFormulario(data.id)
                             db.formularioDao().insert(Formulario(data.id, data.nombre, data.descripcion))
-                            
                             data.secciones.forEach { s ->
                                 db.seccionDao().insert(Seccion(s.id, data.id, s.nombre))
-                                s.preguntas.forEach { p ->
-                                    db.preguntaDao().insert(Pregunta(p.id, s.id, p.descripcion, p.minImagenes, p.maxImagenes))
-                                }
+                                s.preguntas.forEach { p -> db.preguntaDao().insert(Pregunta(p.id, s.id, p.descripcion, p.minImagenes, p.maxImagenes)) }
                             }
                         }
                     }
                 }
-                if (showToast) {
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Sincronización Exitosa", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            } catch (e: Exception) {
-                Log.e("DEBUG_SYNC", "Error en sincro: ${e.message}")
-                if (showToast) {
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Error en conectar con el servidor", Toast.LENGTH_SHORT).show()
-                    }
-                }
-            }
+                if (showToast) Toast.makeText(this@MainActivity, "Datos actualizados", Toast.LENGTH_SHORT).show()
+                cargarTareasPendientes()
+            } catch (e: Exception) { Log.e("SYNC", e.message ?: "") }
         }
     }
 }
