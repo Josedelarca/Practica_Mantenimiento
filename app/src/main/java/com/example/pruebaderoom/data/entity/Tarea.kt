@@ -4,6 +4,7 @@ import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 import java.util.Date
+import java.util.UUID
 
 /**
  * Una "Tarea" representa una visita de mantenimiento específica.
@@ -33,5 +34,8 @@ data class Tarea(
     val observacionesGenerales: String, 
     
     @ColumnInfo(name = "estado")
-    val estado: EstadoTarea
+    val estado: EstadoTarea,
+
+    @ColumnInfo(name = "uuid")
+    val uuid: String = UUID.randomUUID().toString() // Identificador único para idempotencia en el servidor
 )

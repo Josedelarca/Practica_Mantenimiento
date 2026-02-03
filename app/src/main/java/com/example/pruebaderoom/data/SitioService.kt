@@ -15,7 +15,7 @@ interface SitioService {
     @GET("api/formularios/{id}")
     suspend fun getFormularioCompleto(@Path("id") id: Long): FormularioFullResponse
 
-    // FASE 1: Crear Tarea y obtener mapeo de IDs
+    // FASE 1: Crear Tarea y obtener mapeo de IDs (Incluye UUID para Idempotencia)
     @POST("api/tareas")
     suspend fun crearTarea(@Body data: SyncTareaRequest): Response<SyncTareaResponse>
 
@@ -39,6 +39,7 @@ interface SitioService {
 
 // Data Classes para el flujo de sincronización de 2 pasos
 data class SyncTareaRequest(
+    val uuid: String, // <--- NUEVO Y OBLIGATORIO PARA IDEMPOTENCIA
     val sitio_id: Long,
     val formulario_id: Long,
     val fecha: String,

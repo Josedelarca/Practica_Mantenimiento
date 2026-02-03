@@ -66,21 +66,48 @@
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:orientation="horizontal"
-                    android:padding="12dp"
-                    android:gravity="center_vertical">
+                    android:orientation="vertical"
+                    android:padding="12dp">
+
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical"
+                        android:layout_marginBottom="8dp">
+                        <ProgressBar
+                            android:id="@+id/progressSync"
+                            style="?android:attr/progressBarStyleSmall"
+                            android:layout_width="24dp"
+                            android:layout_height="24dp"
+                            android:indeterminate="false"/>
+                        <TextView
+                            android:id="@+id/txtSyncStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginStart="12dp"
+                            android:text="Subiendo fotos al servidor..."
+                            android:textColor="#1976D2"
+                            android:textStyle="bold"
+                            android:textSize="14sp"/>
+                    </LinearLayout>
+
                     <ProgressBar
-                        android:layout_width="24dp"
-                        android:layout_height="24dp"
-                        android:indeterminate="true"/>
+                        android:id="@+id/progressBarHorizontal"
+                        style="?android:attr/progressBarStyleHorizontal"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:max="100"
+                        android:progress="0"/>
+
                     <TextView
+                        android:id="@+id/txtSyncDetail"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="12dp"
-                        android:text="Subiendo fotos al servidor..."
+                        android:layout_marginTop="4dp"
+                        android:text="0 de 0 imágenes enviadas"
                         android:textColor="#1976D2"
-                        android:textStyle="bold"
-                        android:textSize="14sp"/>
+                        android:textSize="12sp"/>
                 </LinearLayout>
             </com.google.android.material.card.MaterialCardView>
 

@@ -22,6 +22,7 @@ import androidx.work.*
 import com.example.pruebaderoom.data.AppDatabase
 import com.example.pruebaderoom.data.ReporteWorker
 import com.example.pruebaderoom.data.RetrofitClient
+import com.example.pruebaderoom.data.entity.EstadoTarea
 import com.example.pruebaderoom.data.entity.Formulario
 import com.example.pruebaderoom.data.entity.Pregunta
 import com.example.pruebaderoom.data.entity.Seccion
@@ -66,6 +67,76 @@ class InspeccionActivity : AppCompatActivity() {
         }
         
         actualizarEstadoBotonEnvio()
+        observarProgresoEnvio()
+    }
+
+    private fun observarProgresoEnvio() {
+        val uniqueWorkName = "sync_tarea_$idTareaRecibido"
+        WorkManager.getInstance(this)
+            .getWorkInfosForUniqueWorkLiveData(uniqueWorkName)
+            .observe(this) { infos ->
+                val info = infos?.firstOrNull() ?: return@observe
+                
+                when (info.state) {
+                    WorkInfo.State.RUNNING -> {
+                        val progress = info.progress.getInt("PROGRESS", 0)
+                        val current = info.progress.getInt("CURRENT_IMG", 0)
+                        val total = info.progress.getInt("TOTAL_IMG", 0)
+                        val status = info.progress.getString("STATUS") ?: "SUBIENDO"
+
+                        btnEnviar.isEnabled = false
+                        btnEnviar.alpha = 0.7f
+                        
+                        if (status == "UPLOADING") {
+                            btnEnviar.text = "SUBIENDO: $progress% (FOTO $current/$total)"
+                        } else {
+                            btnEnviar.text = "EN ESPERA DE RED..."
+                        }
+                    }
+                    WorkInfo.State.SUCCEEDED -> {
+                        Toast.makeText(this, "¡Reporte enviado con éxito!", Toast.LENGTH_SHORT).show()
+                        finish() 
+                    }
+                    WorkInfo.State.FAILED -> {
+                        btnEnviar.isEnabled = true
+                        btnEnviar.alpha = 1.0f
+                        btnEnviar.text = "ERROR: REINTENTAR ENVÍO"
+                    }
+                    else -> {}
+                }
+            }
+    }
+
+    private fun programarSincronizacionWorker() {
+        lifecycleScope.launch {
+            // CAMBIO CLAVE: Actualizamos el estado a SUBIENDO para que MainActivity lo ignore
+            withContext(Dispatchers.IO) {
+                db.tareaDao().getById(idTareaRecibido)?.let { tarea ->
+                    db.tareaDao().insert(tarea.copy(estado = EstadoTarea.SUBIENDO))
+                }
+            }
+
+            val data = Data.Builder()
+                .putLong("ID_TAREA", idTareaRecibido)
+                .build()
+
+            val constraints = Constraints.Builder()
+                .setRequiredNetworkType(NetworkType.CONNECTED)
+                .build()
+
+            val syncWorkRequest = OneTimeWorkRequestBuilder<ReporteWorker>()
+                .setInputData(data)
+                .setConstraints(constraints)
+                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, java.util.concurrent.TimeUnit.SECONDS)
+                .addTag("ReporteWorker")
+                .build()
+
+            WorkManager.getInstance(this@InspeccionActivity).enqueueUniqueWork(
+                "sync_tarea_$idTareaRecibido",
+                ExistingWorkPolicy.KEEP,
+                syncWorkRequest
+            )
+        }
     }
 
     private fun sincronizarFormulario(id: Long) {
@@ -121,32 +192,6 @@ class InspeccionActivity : AppCompatActivity() {
                 btnEnviar.text = if (estaCompleto) "ENVIAR REPORTE" else "FALTAN FOTOS"
             }
         }
-    }
-
-    private fun programarSincronizacionWorker() {
-        val data = Data.Builder()
-            .putLong("ID_TAREA", idTareaRecibido)
-            .build()
-
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.CONNECTED)
-            .build()
-
-        val syncWorkRequest = OneTimeWorkRequestBuilder<ReporteWorker>()
-            .setInputData(data)
-            .setConstraints(constraints)
-            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, java.util.concurrent.TimeUnit.SECONDS)
-            .build()
-
-        WorkManager.getInstance(this).enqueueUniqueWork(
-            "sync_tarea_$idTareaRecibido",
-            ExistingWorkPolicy.KEEP,
-            syncWorkRequest
-        )
-
-        Toast.makeText(this, "Envio iniciado en segundo plano", Toast.LENGTH_LONG).show()
-        // IMPORTANTE: NO borramos nada aquí. El ReporteWorker lo hará al terminar con éxito.
-        finish()
     }
 
     override fun onResume() {

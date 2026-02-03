@@ -41,6 +41,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var containerPendientes: LinearLayout
     private lateinit var cardSyncStatus: View
     
+    private lateinit var txtSyncStatus: TextView
+    private lateinit var txtSyncDetail: TextView
+    private lateinit var progressBarHorizontal: ProgressBar
+    
     private var listaSitios: List<Sitio> = emptyList()
     private var sitioSeleccionado: Sitio? = null
 
@@ -63,6 +67,10 @@ class MainActivity : AppCompatActivity() {
         layoutPendientes = findViewById(R.id.layoutPendientes)
         containerPendientes = findViewById(R.id.containerBotonesPendientes)
         cardSyncStatus = findViewById(R.id.cardSyncStatus)
+        
+        txtSyncStatus = findViewById(R.id.txtSyncStatus)
+        txtSyncDetail = findViewById(R.id.txtSyncDetail)
+        progressBarHorizontal = findViewById(R.id.progressBarHorizontal)
         
         val btnpasar = findViewById<Button>(R.id.btnpasar)
         val btnSync = findViewById<ImageButton>(R.id.btnSync)
@@ -124,16 +132,25 @@ class MainActivity : AppCompatActivity() {
 
     private fun cargarTareasPendientes() {
         lifecycleScope.launch {
-            val pendientes = withContext(Dispatchers.IO) {
+            val tareasEnProceso = withContext(Dispatchers.IO) {
                 db.tareaDao().getTareasPorEstado(EstadoTarea.EN_PROCESO)
             }
 
+            // Filtramos las tareas para mostrar solo las que tienen al menos una foto
+            val pendientesReales = withContext(Dispatchers.IO) {
+                tareasEnProceso.filter { tarea ->
+                    db.respuestaDao().getByTarea(tarea.idTarea).any { respuesta ->
+                        db.imagenDao().getByRespuesta(respuesta.idRespuesta).isNotEmpty()
+                    }
+                }
+            }
+
             containerPendientes.removeAllViews()
-            if (pendientes.isEmpty()) {
+            if (pendientesReales.isEmpty()) {
                 layoutPendientes.visibility = View.GONE
             } else {
                 layoutPendientes.visibility = View.VISIBLE
-                pendientes.forEach { tarea ->
+                pendientesReales.forEach { tarea ->
                     val sitio = withContext(Dispatchers.IO) { db.sitioDao().getById(tarea.idSitio) }
                     sitio?.let { s ->
                         val row = LinearLayout(this@MainActivity).apply {
@@ -210,7 +227,18 @@ class MainActivity : AppCompatActivity() {
     private fun actualizarInformacionSitio(sitio: Sitio) {
         lifecycleScope.launch {
             val tareaActiva = withContext(Dispatchers.IO) { db.tareaDao().getTareaActivaPorSitio(sitio.idSitio) }
-            val status = if (tareaActiva != null) "PENDIENTE" else "LIBRE"
+            
+            var esPendienteConFotos = false
+            if (tareaActiva != null) {
+                esPendienteConFotos = withContext(Dispatchers.IO) {
+                    db.respuestaDao().getByTarea(tareaActiva.idTarea).any { r ->
+                        db.imagenDao().getByRespuesta(r.idRespuesta).isNotEmpty()
+                    }
+                }
+            }
+        
+            val status = if (esPendienteConFotos) "PENDIENTE" else "LIBRE"
+
             txtInfo.text = """
                 ID SITIO: ${sitio.idSitio}
                 NOMBRE: ${sitio.nombre}
@@ -222,10 +250,36 @@ class MainActivity : AppCompatActivity() {
 
     private fun observarSincronizacionGlobal() {
         WorkManager.getInstance(this).getWorkInfosByTagLiveData("ReporteWorker").observe(this) { infos ->
-            val subiendo = infos != null && infos.any { it.state == WorkInfo.State.RUNNING }
-            cardSyncStatus.visibility = if (subiendo) View.VISIBLE else View.GONE
-            if (subiendo) {
+            val info = infos?.firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+            
+            if (info != null) {
+                cardSyncStatus.visibility = View.VISIBLE
+                val progress = info.progress.getInt("PROGRESS", 0)
+                val current = info.progress.getInt("CURRENT_IMG", 0)
+                val total = info.progress.getInt("TOTAL_IMG", 0)
+                val status = info.progress.getString("STATUS") ?: "WAITING"
+
+                when (status) {
+                    "UPLOADING" -> {
+                        txtSyncStatus.text = "Estado: Subiendo..."
+                        progressBarHorizontal.isIndeterminate = false
+                        progressBarHorizontal.progress = progress
+                        txtSyncDetail.text = "$progress% - Imagen $current de $total"
+                    }
+                    "WAITING" -> {
+                        txtSyncStatus.text = "Estado: Esperando conexión..."
+                        progressBarHorizontal.isIndeterminate = true
+                    }
+                    "ERROR" -> {
+                        txtSyncStatus.text = "Estado: Error al subir"
+                    }
+                    "SUCCESS" -> {
+                        txtSyncStatus.text = "Estado: Enviado"
+                    }
+                }
                 cargarTareasPendientes()
+            } else {
+                cardSyncStatus.visibility = View.GONE
             }
         }
     }

@@ -19,7 +19,7 @@ import com.example.pruebaderoom.data.entity.*
         Respuesta::class,
         Imagen::class
     ],
-    version = 7, // Subimos a 7
+    version = 8, // Subimos a 7
     exportSchema = false
 )
 @TypeConverters(Converters::class)
