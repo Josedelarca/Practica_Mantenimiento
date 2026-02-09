@@ -37,6 +37,9 @@ class InspeccionActivity : AppCompatActivity() {
     private lateinit var txtTituloFormulario: TextView
     private lateinit var btnEnviar: Button
     private var idTareaRecibido: Long = -1
+    
+    // Mantenemos una instancia única del adaptador
+    private lateinit var inspeccionAdapter: InspeccionAdapter
 
     sealed class InspeccionItem {
         data class SeccionHeader(val seccion: Seccion) : InspeccionItem()
@@ -58,6 +61,11 @@ class InspeccionActivity : AppCompatActivity() {
         btnEnviar = findViewById(R.id.btnEnviarReporte)
         
         rvPreguntas.layoutManager = LinearLayoutManager(this)
+        
+        // Inicializamos el adaptador vacío al inicio
+        inspeccionAdapter = InspeccionAdapter(mutableListOf(), idTareaRecibido, db)
+        rvPreguntas.adapter = inspeccionAdapter
+        
         btnVolver?.setOnClickListener { finish() }
 
         sincronizarFormulario(1L)
@@ -159,7 +167,7 @@ class InspeccionActivity : AppCompatActivity() {
                                     preguntaApi.id, 
                                     seccionApi.id, 
                                     preguntaApi.descripcion, 
-                                    preguntaApi.minImagenes, 
+                                    preguntaApi.minImagenes,
                                     preguntaApi.maxImagenes
                                 ))
                                 
@@ -223,7 +231,9 @@ class InspeccionActivity : AppCompatActivity() {
                 }
                 list
             }
-            rvPreguntas.adapter = InspeccionAdapter(hibrido, idTareaRecibido, db)
+            
+            // Actualizamos los datos del adaptador existente en lugar de crear uno nuevo
+            inspeccionAdapter.updateData(hibrido)
 
             if (hibrido.isNotEmpty()) {
                 val info = withContext(Dispatchers.IO) { db.formularioDao().getById(1L) }
@@ -233,11 +243,17 @@ class InspeccionActivity : AppCompatActivity() {
     }
 
     class InspeccionAdapter(
-        private val items: List<InspeccionItem>,
+        private val items: MutableList<InspeccionItem>,
         private val idTarea: Long,
         private val database: AppDatabase
     ) : RecyclerView.Adapter<RecyclerView.ViewHolder>() {
         
+        fun updateData(newItems: List<InspeccionItem>) {
+            items.clear()
+            items.addAll(newItems)
+            notifyDataSetChanged()
+        }
+
         override fun getItemViewType(position: Int) = if (items[position] is InspeccionItem.SeccionHeader) 0 else 1
         
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): RecyclerView.ViewHolder {
