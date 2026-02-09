@@ -22,10 +22,10 @@ import androidx.work.*
 import com.example.pruebaderoom.data.AppDatabase
 import com.example.pruebaderoom.data.ReporteWorker
 import com.example.pruebaderoom.data.RetrofitClient
-import com.example.pruebaderoom.data.entity.EstadoTarea
-import com.example.pruebaderoom.data.entity.Formulario
-import com.example.pruebaderoom.data.entity.Pregunta
-import com.example.pruebaderoom.data.entity.Seccion
+import com.example.pruebaderoom.data.entity.*
+import com.example.pruebaderoom.data.SeccionApiData
+import com.example.pruebaderoom.data.PreguntaApiData
+import com.example.pruebaderoom.data.CampoApiData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -109,7 +109,6 @@ class InspeccionActivity : AppCompatActivity() {
 
     private fun programarSincronizacionWorker() {
         lifecycleScope.launch {
-            // CAMBIO CLAVE: Actualizamos el estado a SUBIENDO para que MainActivity lo ignore
             withContext(Dispatchers.IO) {
                 db.tareaDao().getById(idTareaRecibido)?.let { tarea ->
                     db.tareaDao().insert(tarea.copy(estado = EstadoTarea.SUBIENDO))
@@ -145,21 +144,33 @@ class InspeccionActivity : AppCompatActivity() {
                 val response = withContext(Dispatchers.IO) { RetrofitClient.instance.getFormularioCompleto(id) }
 
                 if (response.success) {
-                    val data = response.data
-                    val seccionesApi = data.secciones.map { s -> Seccion(s.id, data.id, s.nombre) }
-                    val idsSeccionesApi = seccionesApi.map { it.idSeccion }
-                    val preguntasApi = data.secciones.flatMap { s -> 
-                        s.preguntas.map { p -> Pregunta(p.id, s.id, p.descripcion, p.minImagenes, p.maxImagenes) }
-                    }
-                    val idsPreguntasApi = preguntasApi.map { it.idPregunta }
-
+                    val formData = response.data
+                    
                     db.withTransaction {
-                        db.formularioDao().insert(Formulario(data.id, data.nombre, data.descripcion))
-                        db.seccionDao().deleteOldSecciones(data.id, idsSeccionesApi)
-                        db.preguntaDao().deleteOldPreguntas(data.id, idsPreguntasApi)
-                        db.seccionDao().upsertAll(seccionesApi)
-                        db.preguntaDao().upsertAll(preguntasApi)
+                        db.formularioDao().insert(Formulario(formData.id, formData.nombre, formData.descripcion))
+                        db.seccionDao().deleteByFormulario(formData.id)
+                        db.campoDao().deleteAll()
+
+                        formData.secciones.forEach { seccionApi ->
+                            db.seccionDao().insert(Seccion(seccionApi.id, formData.id, seccionApi.nombre))
+                            
+                            seccionApi.preguntas.forEach { preguntaApi -> 
+                                db.preguntaDao().insert(Pregunta(
+                                    preguntaApi.id, 
+                                    seccionApi.id, 
+                                    preguntaApi.descripcion, 
+                                    preguntaApi.minImagenes, 
+                                    preguntaApi.maxImagenes
+                                ))
+                                
+                                val camposDinamicos = preguntaApi.campos.map { campoApi ->
+                                    Campo(campoApi.id, preguntaApi.id, campoApi.tipo, campoApi.label, campoApi.orden)
+                                }
+                                db.campoDao().insertAll(camposDinamicos)
+                            }
+                        }
                     }
+
                     cargarYMostrar()
                     actualizarEstadoBotonEnvio()
                 }

@@ -15,11 +15,9 @@ interface SitioService {
     @GET("api/formularios/{id}")
     suspend fun getFormularioCompleto(@Path("id") id: Long): FormularioFullResponse
 
-    // FASE 1: Crear Tarea y obtener mapeo de IDs (Incluye UUID para Idempotencia)
     @POST("api/tareas")
     suspend fun crearTarea(@Body data: SyncTareaRequest): Response<SyncTareaResponse>
 
-    // FASE 2: Subir imagen individual
     @Multipart
     @POST("api/tareas/{tarea_id}/imagenes")
     suspend fun subirImagen(
@@ -29,17 +27,19 @@ interface SitioService {
         @Part imagen: MultipartBody.Part
     ): Response<Unit>
 
+    // Este método es necesario para ReporteManager
     @Multipart
-    @POST("api/tareas")
+    @POST("api/tareas/bulk")
     suspend fun enviarReporte(
         @Part("data") data: RequestBody,
         @Part imagenes: List<MultipartBody.Part>
     ): Response<Unit>
 }
 
-// Data Classes para el flujo de sincronización de 2 pasos
+// --- DATA CLASSES PARA ENVÍO ---
+
 data class SyncTareaRequest(
-    val uuid: String, // <--- NUEVO Y OBLIGATORIO PARA IDEMPOTENCIA
+    val uuid: String,
     val sitio_id: Long,
     val formulario_id: Long,
     val fecha: String,
@@ -49,7 +49,12 @@ data class SyncTareaRequest(
 
 data class SyncRespuestaRequest(
     val pregunta_id: Long,
-    val texto_respuesta: String?
+    val valores: List<SyncValorRequest>
+)
+
+data class SyncValorRequest(
+    val campo_id: Long,
+    val valor: String
 )
 
 data class SyncTareaResponse(
@@ -59,12 +64,12 @@ data class SyncTareaResponse(
 
 data class TareaMappingData(
     val tarea_id: Long,
-    val respuestas: List<RespuestaMapping>
+    val mapa_respuestas: List<RespuestaMapping>
 )
 
 data class RespuestaMapping(
     val pregunta_id: Long,
-    val respuesta_id: Long // ID del servidor
+    val respuesta_id: Long
 )
 
 data class SitioResponse(

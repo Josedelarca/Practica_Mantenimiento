@@ -1,21 +1,14 @@
 package com.example.pruebaderoom
 
 import android.app.Dialog
-import android.content.Intent
 import android.graphics.*
 import android.media.ExifInterface
 import android.net.Uri
 import android.os.Bundle
-import android.provider.MediaStore
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.view.Window
-import android.widget.Button
-import android.widget.ImageButton
-import android.widget.ImageView
-import android.widget.TextView
-import android.widget.Toast
+import android.widget.*
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -24,11 +17,8 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.RecyclerView
 import com.example.pruebaderoom.data.AppDatabase
-import com.example.pruebaderoom.data.entity.Imagen
+import com.example.pruebaderoom.data.entity.*
 import com.example.pruebaderoom.data.entity.Respuesta as RespuestaEntity
-import com.example.pruebaderoom.data.entity.Sitio
-import com.example.pruebaderoom.data.entity.Pregunta
-import com.example.pruebaderoom.data.entity.Seccion
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -37,11 +27,6 @@ import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 
-/**
- * Esta pantalla se encarga de lo más importante: la captura de fotos.
- * Aquí el usuario toma la evidencia, se le pone una marca de agua (GPS, fecha, sitio)
- * y se asegura de que cumpla con el mínimo de fotos antes de guardar.
- */
 data class FotoEvidencia(val bitmap: Bitmap, var rutaExistente: String? = null)
 
 class Respuesta : AppCompatActivity() {
@@ -54,6 +39,7 @@ class Respuesta : AppCompatActivity() {
     private lateinit var txtSeccion: TextView
     private lateinit var txtPregunta: TextView
     private lateinit var txtRequisitos: TextView
+    private lateinit var containerCampos: LinearLayout
     
     private var idPreguntaRecibido: Long = -1
     private var idTareaRecibido: Long = -1
@@ -64,23 +50,20 @@ class Respuesta : AppCompatActivity() {
 
     private var photoFile: File? = null
     private var photoUri: Uri? = null
+    
+    private val mapaVistasCampos = mutableMapOf<Long, View>()
 
-    // Lanzador para abrir la cámara del celular
     private val takePictureLauncher = registerForActivityResult(ActivityResultContracts.TakePicture()) { success ->
         if (success && photoFile != null) {
             val rawBitmap = BitmapFactory.decodeFile(photoFile!!.absolutePath)
             rawBitmap?.let { bitmap ->
-                // Corregimos la orientación porque a veces salen acostadas
                 val bitmapDerecho = corregirRotacion(photoFile!!.absolutePath, bitmap)
                 if (listaFotos.size < maxFotosPermitidas) {
-                    // Le ponemos los datos de GPS y Fecha directamente a la imagen
                     val bitmapConMarca = agregarMarcaDeAgua(bitmapDerecho)
-                    // Guardamos el archivo final en la memoria del celular
                     guardarFotoAlInstante(bitmapConMarca)
-                    // Borramos la foto temporal sin marca de agua
                     if (photoFile!!.exists()) photoFile!!.delete()
                 } else {
-                    Toast.makeText(this, "Ya no caben más fotos", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this, "Límite de fotos alcanzado", Toast.LENGTH_SHORT).show()
                 }
             }
         }
@@ -96,12 +79,12 @@ class Respuesta : AppCompatActivity() {
         txtSeccion = findViewById(R.id.txtSeccionActual)
         txtPregunta = findViewById(R.id.txtPreguntaActual)
         txtRequisitos = findViewById(R.id.txtRequisitosFotos)
+        containerCampos = findViewById(R.id.containerCamposDinamicos)
         rvFotos = findViewById(R.id.rvFotos)
         
         idPreguntaRecibido = intent.getLongExtra("ID_PREGUNTA", -1)
         idTareaRecibido = intent.getLongExtra("ID_TAREA", -1)
 
-        // Cargamos la pregunta y si ya había fotos tomadas antes, las mostramos
         cargarDatosExistentesYsitio()
 
         adapter = FotoAdapter(
@@ -111,31 +94,203 @@ class Respuesta : AppCompatActivity() {
         )
         rvFotos.adapter = adapter
 
-        // Botón para tomar una nueva foto
         findViewById<Button>(R.id.btnSubir).setOnClickListener {
             if (listaFotos.size >= maxFotosPermitidas) {
-                Toast.makeText(this, "Límite de fotos alcanzado", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Límite alcanzado", Toast.LENGTH_SHORT).show()
             } else {
                 lanzarCamaraSegura()
             }
         }
 
-        // Botón "GUARDAR TODO" para terminar esta pregunta
         findViewById<Button>(R.id.btnEnviar).setOnClickListener {
-            if (listaFotos.size < minFotosRequeridas) {
-                Toast.makeText(this, "Debes tomar al menos $minFotosRequeridas fotos", Toast.LENGTH_SHORT).show()
-            } else {
-                marcarComoFinalizado()
-            }
+            validarYGuardar()
         }
 
         findViewById<Button>(R.id.btnVolver).setOnClickListener { finish() }
     }
 
-    /**
-     * Borra la foto no solo de la pantalla, sino también del archivo real en el celular
-     * y de la base de datos para no dejar basura.
-     */
+    private fun cargarDatosExistentesYsitio() {
+        lifecycleScope.launch {
+            val data = withContext(Dispatchers.IO) {
+                val p = db.preguntaDao().getById(idPreguntaRecibido)
+                val s = p?.let { db.seccionDao().getById(it.idSeccion) }
+                val r = db.respuestaDao().getByTarea(idTareaRecibido).find { it.idPregunta == idPreguntaRecibido }
+                
+                if (r != null) idRespuestaActual = r.idRespuesta
+                
+                val im = r?.let { db.imagenDao().getByRespuesta(it.idRespuesta) } ?: emptyList<Imagen>()
+                val tarea = db.tareaDao().getById(idTareaRecibido)
+                val sit = tarea?.let { db.sitioDao().getById(it.idSitio) }
+                
+                val camp = db.campoDao().getByPregunta(idPreguntaRecibido)
+                val valEx = r?.let { db.valorRespuestaDao().getByRespuesta(it.idRespuesta) } ?: emptyList<ValorRespuesta>()
+                
+                mapOf(
+                    "pregunta" to p,
+                    "seccion" to s,
+                    "imgs" to im,
+                    "sitio" to sit,
+                    "campos" to camp,
+                    "valores" to valEx
+                )
+            }
+
+            val p = data["pregunta"] as? Pregunta
+            val s = data["seccion"] as? Seccion
+            @Suppress("UNCHECKED_CAST")
+            val ims = data["imgs"] as List<Imagen>
+            sitioActual = data["sitio"] as? Sitio
+            @Suppress("UNCHECKED_CAST")
+            val listCampos = data["campos"] as List<Campo>
+            @Suppress("UNCHECKED_CAST")
+            val listValores = data["valores"] as List<ValorRespuesta>
+
+            p?.let {
+                minFotosRequeridas = it.minImagenes
+                maxFotosPermitidas = it.maxImagenes
+                txtPregunta.text = it.descripcion
+                txtRequisitos.text = "Mínimo: $minFotosRequeridas fotos"
+            }
+            s?.let { txtSeccion.text = "SECCIÓN: ${it.nombre.uppercase()}" }
+
+            renderizarCampos(listCampos, listValores)
+
+            if (ims.isNotEmpty()) {
+                withContext(Dispatchers.IO) {
+                    ims.forEach { img ->
+                        val bitmap = BitmapFactory.decodeFile(img.rutaArchivo)
+                        if (bitmap != null) {
+                            withContext(Dispatchers.Main) {
+                                listaFotos.add(FotoEvidencia(bitmap, img.rutaArchivo))
+                                adapter.notifyItemInserted(listaFotos.size - 1)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private fun renderizarCampos(campos: List<Campo>, valores: List<ValorRespuesta>) {
+        containerCampos.removeAllViews()
+        mapaVistasCampos.clear()
+
+        campos.forEach { campo ->
+            val valorExistente = valores.find { it.idCampo == campo.idCampo }?.valor
+            
+            val layoutCampo = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, 8, 0, 8)
+            }
+
+            val label = TextView(this).apply {
+                text = campo.label
+                textSize = 14f
+                setTextColor(Color.parseColor("#1E2A44"))
+                setTypeface(null, Typeface.BOLD)
+            }
+            layoutCampo.addView(label)
+
+            val vistaInput: View = when (campo.tipo.lowercase()) {
+                "booleano" -> RadioGroup(this).apply {
+                    orientation = RadioGroup.HORIZONTAL
+                    val rbSi = RadioButton(this@Respuesta).apply { 
+                        text = "SI"
+                        id = View.generateViewId() 
+                    }
+                    val rbNo = RadioButton(this@Respuesta).apply { 
+                        text = "NO"
+                        id = View.generateViewId() 
+                    }
+                    
+                    addView(rbSi)
+                    addView(rbNo)
+
+                    if (valorExistente == "1") rbSi.isChecked = true
+                    else if (valorExistente == "0") rbNo.isChecked = true
+                }
+                "numero" -> EditText(this).apply {
+                    inputType = android.text.InputType.TYPE_CLASS_NUMBER
+                    hint = "Ingresar número..."
+                    setText(valorExistente)
+                }
+                else -> EditText(this).apply { 
+                    hint = "Escribir aquí..."
+                    setText(valorExistente)
+                }
+            }
+            
+            layoutCampo.addView(vistaInput)
+            containerCampos.addView(layoutCampo)
+            mapaVistasCampos[campo.idCampo] = vistaInput
+        }
+    }
+
+    private fun validarYGuardar() {
+        // 1. Validar Fotos
+        if (listaFotos.size < minFotosRequeridas) {
+            Toast.makeText(this, "Faltan fotos ($minFotosRequeridas mín)", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // 2. Validar Campos Dinámicos
+        var todosLlenos = true
+        mapaVistasCampos.values.forEach { vista ->
+            when (vista) {
+                is RadioGroup -> {
+                    if (vista.checkedRadioButtonId == -1) todosLlenos = false
+                }
+                is EditText -> {
+                    if (vista.text.toString().trim().isEmpty()) todosLlenos = false
+                }
+            }
+        }
+
+        if (!todosLlenos) {
+            Toast.makeText(this, "Debes completar todas las preguntas", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        // Si todo está bien, guardamos
+        guardarTodoYFinalizar()
+    }
+
+    private fun guardarTodoYFinalizar() {
+        lifecycleScope.launch {
+            withContext(Dispatchers.IO) {
+                // 1. Asegurar que exista la respuesta padre
+                if (idRespuestaActual == -1L) {
+                    idRespuestaActual = System.currentTimeMillis()
+                    db.respuestaDao().insert(RespuestaEntity(idRespuestaActual, idPreguntaRecibido, idTareaRecibido, "Finalizado", Date()))
+                } else {
+                    val r = db.respuestaDao().getById(idRespuestaActual)
+                    if (r != null) {
+                        db.respuestaDao().insert(r.copy(texto = "Finalizado"))
+                    }
+                }
+
+                // 2. Guardar valores de los campos
+                val nuevosValores = mutableListOf<ValorRespuesta>()
+                mapaVistasCampos.forEach { (idCampo, vista) ->
+                    val valorStr = when (vista) {
+                        is RadioGroup -> {
+                            val rb = vista.findViewById<RadioButton>(vista.checkedRadioButtonId)
+                            if (rb != null && rb.text == "SI") "1" else "0"
+                        }
+                        is EditText -> vista.text.toString()
+                        else -> ""
+                    }
+                    nuevosValores.add(ValorRespuesta(idRespuesta = idRespuestaActual, idCampo = idCampo, valor = valorStr))
+                }
+                
+                db.valorRespuestaDao().deleteByRespuesta(idRespuestaActual)
+                db.valorRespuestaDao().insertAll(nuevosValores)
+            }
+            Toast.makeText(this@Respuesta, "¡Inspección guardada!", Toast.LENGTH_SHORT).show()
+            finish()
+        }
+    }
+
     private fun eliminarFotoFisicamente(posicion: Int) {
         val foto = listaFotos[posicion]
         lifecycleScope.launch {
@@ -148,24 +303,9 @@ class Respuesta : AppCompatActivity() {
             }
             listaFotos.removeAt(posicion)
             adapter.notifyItemRemoved(posicion)
-
-            // Si el usuario borra todas las fotos, la pregunta vuelve a estar "Incompleta"
-            if (listaFotos.isEmpty()) {
-                withContext(Dispatchers.IO) {
-                    val respuesta = db.respuestaDao().getAll().find { it.idRespuesta == idRespuestaActual }
-                    respuesta?.let {
-                        db.respuestaDao().insert(it.copy(texto = "En proceso"))
-                    }
-                }
-                Toast.makeText(this@Respuesta, "Pregunta marcada como incompleta", Toast.LENGTH_SHORT).show()
-            }
         }
     }
 
-    /**
-     * Revisa la información EXIF de la foto para ver si hay que rotarla
-     * (así evitamos que las fotos salgan de lado).
-     */
     private fun corregirRotacion(path: String, source: Bitmap): Bitmap {
         val exif = ExifInterface(path)
         val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED)
@@ -179,10 +319,6 @@ class Respuesta : AppCompatActivity() {
         return Bitmap.createBitmap(source, 0, 0, source.width, source.height, matrix, true)
     }
 
-    /**
-     * Dibuja un rectángulo oscuro abajo de la foto y escribe:
-     * El nombre del sitio, las coordenadas GPS y la fecha/hora actual.
-     */
     private fun agregarMarcaDeAgua(bitmap: Bitmap): Bitmap {
         val mutableBitmap = bitmap.copy(Bitmap.Config.ARGB_8888, true)
         val canvas = Canvas(mutableBitmap)
@@ -205,9 +341,6 @@ class Respuesta : AppCompatActivity() {
         return mutableBitmap
     }
 
-    /**
-     * Prepara el archivo donde se va a guardar la foto temporalmente y abre la cámara.
-     */
     private fun lanzarCamaraSegura() {
         try {
             photoFile = File.createTempFile("CAPTURA_", ".jpg", filesDir)
@@ -218,9 +351,6 @@ class Respuesta : AppCompatActivity() {
         }
     }
 
-    /**
-     * Muestra la foto en pantalla completa cuando el usuario la toca.
-     */
     private fun mostrarVistaPrevia(bitmap: Bitmap) {
         val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         dialog.setContentView(R.layout.dialog_foto_preview)
@@ -231,53 +361,25 @@ class Respuesta : AppCompatActivity() {
         dialog.show()
     }
 
-    /**
-     * Guarda el estado "Finalizado" en la base de datos para que en la lista principal salga VERDE.
-     */
-    private fun marcarComoFinalizado() {
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                if (idRespuestaActual != -1L) {
-                    val respuesta = db.respuestaDao().getAll().find { it.idRespuesta == idRespuestaActual }
-                    respuesta?.let {
-                        val finalizada = it.copy(texto = "Finalizado")
-                        db.respuestaDao().insert(finalizada)
-                    }
-                }
-            }
-            Toast.makeText(this@Respuesta, "¡Todo listo!", Toast.LENGTH_SHORT).show()
-            finish()
-        }
-    }
-
-    /**
-     * Convierte el bitmap procesado en un archivo JPG real y lo guarda en la carpeta privada de la app.
-     */
     private fun guardarFotoAlInstante(bitmap: Bitmap) {
         lifecycleScope.launch {
             try {
                 val nuevaRuta = withContext(Dispatchers.IO) {
                     if (idRespuestaActual == -1L) {
-                        val respuestaExistente = db.respuestaDao().getAll().find {
-                            it.idPregunta == idPreguntaRecibido && it.idTarea == idTareaRecibido
-                        }
-                        if (respuestaExistente == null) {
+                        val resp = db.respuestaDao().getByTarea(idTareaRecibido).find { it.idPregunta == idPreguntaRecibido }
+                        if (resp == null) {
                             idRespuestaActual = System.currentTimeMillis()
                             db.respuestaDao().insert(RespuestaEntity(idRespuestaActual, idPreguntaRecibido, idTareaRecibido, "En proceso", Date()))
                         } else {
-                            idRespuestaActual = respuestaExistente.idRespuesta
+                            idRespuestaActual = resp.idRespuesta
                         }
                     }
 
-                    // El nombre del archivo lleva el sitio y la hora para que sea fácil identificarlo
                     val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
-                    val nombreSitioLimpio = (sitioActual?.nombre ?: "SITIO").replace(" ", "_")
-                    val nombreArchivo = "${nombreSitioLimpio}_${timeStamp}_${UUID.randomUUID().toString().take(4)}.jpg"
-
+                    val nombreArchivo = "IMG_${idRespuestaActual}_${timeStamp}.jpg"
                     val file = File(filesDir, nombreArchivo)
-                    val out = FileOutputStream(file)
-                    bitmap.compress(Bitmap.CompressFormat.JPEG, 90, out)
-                    out.close()
+                    
+                    FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it) }
 
                     db.imagenDao().insert(Imagen(System.currentTimeMillis(), idRespuestaActual, file.absolutePath, "HD", Date()))
                     file.absolutePath
@@ -285,57 +387,11 @@ class Respuesta : AppCompatActivity() {
                 listaFotos.add(FotoEvidencia(bitmap, nuevaRuta))
                 adapter.notifyItemInserted(listaFotos.size - 1)
             } catch (e: Exception) {
-                Toast.makeText(this@Respuesta, "Error al guardar la foto", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this@Respuesta, "Error al guardar foto", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    /**
-     * Busca en la base de datos local toda la info de la pregunta y si ya había fotos guardadas.
-     */
-    private fun cargarDatosExistentesYsitio() {
-        lifecycleScope.launch {
-            val data: List<Any?> = withContext(Dispatchers.IO) {
-                val p = db.preguntaDao().getById(idPreguntaRecibido)
-                val s = p?.let { db.seccionDao().getById(it.idSeccion) }
-                val r = db.respuestaDao().getAll().find { it.idPregunta == idPreguntaRecibido && it.idTarea == idTareaRecibido }
-                r?.let { idRespuestaActual = it.idRespuesta }
-                val imgs = r?.let { db.imagenDao().getByRespuesta(it.idRespuesta) } ?: emptyList<Imagen>()
-                val tarea = db.tareaDao().getById(idTareaRecibido)
-                val sit = tarea?.let { db.sitioDao().getById(it.idSitio) }
-                listOf(p, s, imgs, sit)
-            }
-            val p = data[0] as? Pregunta
-            val s = data[1] as? Seccion
-            @Suppress("UNCHECKED_CAST")
-            val imgs = data[2] as List<Imagen>
-            sitioActual = data[3] as? Sitio
-            p?.let {
-                minFotosRequeridas = it.minImagenes
-                maxFotosPermitidas = it.maxImagenes
-                txtPregunta.text = it.descripcion
-                txtRequisitos.text = "Se necesitan al menos $minFotosRequeridas fotos"
-            }
-            s?.let { txtSeccion.text = "SECCIÓN: ${it.nombre.uppercase()}" }
-            if (imgs.isNotEmpty()) {
-                withContext(Dispatchers.IO) {
-                    imgs.forEach { img ->
-                        val bitmap = BitmapFactory.decodeFile(img.rutaArchivo)
-                        if (bitmap != null) {
-                            withContext(Dispatchers.Main) {
-                                listaFotos.add(FotoEvidencia(bitmap, img.rutaArchivo))
-                                adapter.notifyItemInserted(listaFotos.size - 1)
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    /**
-     * Adaptador para mostrar las miniaturas de las fotos que vamos tomando.
-     */
     class FotoAdapter(
         private val fotos: List<FotoEvidencia>, 
         private val onEliminar: (Int) -> Unit,

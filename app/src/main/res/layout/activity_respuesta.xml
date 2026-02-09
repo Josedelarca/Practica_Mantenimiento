@@ -20,7 +20,7 @@
         android:id="@+id/txtTitulo"
         android:layout_width="0dp"
         android:layout_height="wrap_content"
-        android:text="Captura de Evidencia"
+        android:text="Captura de Datos"
         android:textColor="#FFFFFF"
         android:textSize="20sp"
         android:textStyle="bold"
@@ -68,6 +68,14 @@
                 android:textSize="16sp"
                 android:layout_marginBottom="12dp"/>
 
+            <!-- CONTENEDOR PARA CAMPOS DINÁMICOS -->
+            <LinearLayout
+                android:id="@+id/containerCamposDinamicos"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:layout_marginBottom="12dp"/>
+
             <TextView
                 android:id="@+id/txtRequisitosFotos"
                 android:layout_width="wrap_content"
@@ -94,31 +102,30 @@
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"/>
 
-    <!-- LISTA FOTOS (CORREGIDO: Horizontal y Altura Fija) -->
+    <!-- LISTA FOTOS (ALTURA CORREGIDA PARA QUE SE VEAN) -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rvFotos"
         android:layout_width="match_parent"
-        android:layout_height="150dp"
-        android:layout_marginTop="8dp"
-        android:paddingHorizontal="16dp"
+        android:layout_height="160dp"
+        android:layout_marginTop="12dp"
+        android:paddingHorizontal="12dp"
         android:clipToPadding="false"
         android:orientation="horizontal"
         app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
         app:layout_constraintTop_toBottomOf="@id/btnSubir"
         app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent" />
+        app:layout_constraintEnd_toEndOf="parent"
+        tools:listitem="@layout/item_foto" />
 
     <!-- BOTONES ACCIÓN -->
     <LinearLayout
         android:id="@+id/layoutAcciones"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="52dp"
         android:orientation="horizontal"
         android:padding="16dp"
         android:weightSum="2"
-        app:layout_constraintBottom_toBottomOf="parent"
-        tools:layout_editor_absoluteX="0dp">
+        app:layout_constraintBottom_toBottomOf="parent">
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/btnVolver"

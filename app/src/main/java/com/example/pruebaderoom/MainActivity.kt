@@ -23,6 +23,10 @@ import androidx.work.WorkManager
 import com.example.pruebaderoom.data.AppDatabase
 import com.example.pruebaderoom.data.RetrofitClient
 import com.example.pruebaderoom.data.entity.*
+import com.example.pruebaderoom.data.FormularioApiData
+import com.example.pruebaderoom.data.SeccionApiData
+import com.example.pruebaderoom.data.PreguntaApiData
+import com.example.pruebaderoom.data.CampoApiData
 import com.google.android.material.button.MaterialButton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
@@ -84,7 +88,7 @@ class MainActivity : AppCompatActivity() {
 
         btnSync.setOnClickListener {
             if (isNetworkAvailable()) {
-                Toast.makeText(this, "Actualizando Informacion", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Actualizando Información", Toast.LENGTH_SHORT).show()
                 sincronizarTodo(showToast = true)
             }
         }
@@ -136,7 +140,6 @@ class MainActivity : AppCompatActivity() {
                 db.tareaDao().getTareasPorEstado(EstadoTarea.EN_PROCESO)
             }
 
-            // Filtramos las tareas para mostrar solo las que tienen al menos una foto
             val pendientesReales = withContext(Dispatchers.IO) {
                 tareasEnProceso.filter { tarea ->
                     db.respuestaDao().getByTarea(tarea.idTarea).any { respuesta ->
@@ -163,7 +166,7 @@ class MainActivity : AppCompatActivity() {
                             )
                         }
 
-                        val btnRetomar = MaterialButton(this@MainActivity, null, com.google.android.material.R.attr.materialButtonStyle).apply {
+                        val btnRetomar = MaterialButton(this@MainActivity).apply {
                             text = "RETOMAR: ${s.nombre}"
                             layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
                             setIconResource(android.R.drawable.ic_menu_edit)
@@ -205,6 +208,7 @@ class MainActivity : AppCompatActivity() {
                         val file = File(img.rutaArchivo)
                         if (file.exists()) file.delete()
                     }
+                    db.valorRespuestaDao().deleteByRespuesta(r.idRespuesta)
                     db.imagenDao().deleteByRespuesta(r.idRespuesta)
                 }
                 db.respuestaDao().deleteByTarea(tarea.idTarea)
@@ -244,20 +248,31 @@ class MainActivity : AppCompatActivity() {
                 NOMBRE: ${sitio.nombre}
                 TEAM: ${sitio.teem}
                 VISITAS: ${sitio.visit}
+                MORFOLOGÍA: ${sitio.siteMorfology}
+                NUEVA MORFOLOGÍA: ${sitio.newMorfology}
+                LATITUD: ${sitio.latitud}
+                LONGITUD: ${sitio.longitud}
+                ESTADO: $status
             """.trimIndent()
         }
     }
 
     private fun observarSincronizacionGlobal() {
         WorkManager.getInstance(this).getWorkInfosByTagLiveData("ReporteWorker").observe(this) { infos ->
-            val info = infos?.firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
-            
-            if (info != null) {
+            if (infos.isNullOrEmpty()) {
+                cardSyncStatus.visibility = View.GONE
+                return@observe
+            }
+
+            val infoActiva = infos.firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
+            val infoExitosa = infos.firstOrNull { it.state == WorkInfo.State.SUCCEEDED }
+
+            if (infoActiva != null) {
                 cardSyncStatus.visibility = View.VISIBLE
-                val progress = info.progress.getInt("PROGRESS", 0)
-                val current = info.progress.getInt("CURRENT_IMG", 0)
-                val total = info.progress.getInt("TOTAL_IMG", 0)
-                val status = info.progress.getString("STATUS") ?: "WAITING"
+                val progress = infoActiva.progress.getInt("PROGRESS", 0)
+                val current = infoActiva.progress.getInt("CURRENT_IMG", 0)
+                val total = infoActiva.progress.getInt("TOTAL_IMG", 0)
+                val status = infoActiva.progress.getString("STATUS") ?: "WAITING"
 
                 when (status) {
                     "UPLOADING" -> {
@@ -269,18 +284,28 @@ class MainActivity : AppCompatActivity() {
                     "WAITING" -> {
                         txtSyncStatus.text = "Estado: Esperando conexión..."
                         progressBarHorizontal.isIndeterminate = true
+                        txtSyncDetail.text = "La subida se reanudará al tener internet"
                     }
                     "ERROR" -> {
                         txtSyncStatus.text = "Estado: Error al subir"
-                    }
-                    "SUCCESS" -> {
-                        txtSyncStatus.text = "Estado: Enviado"
+                        txtSyncDetail.text = "Se reintentará automáticamente"
                     }
                 }
-                cargarTareasPendientes()
+            } else if (infoExitosa != null) {
+                txtSyncStatus.text = "Estado: ¡Subido correctamente!"
+                progressBarHorizontal.isIndeterminate = false
+                progressBarHorizontal.progress = 100
+                txtSyncDetail.text = "Todos los datos están en el servidor"
+                
+                cardSyncStatus.postDelayed({ 
+                    cardSyncStatus.visibility = View.GONE 
+                    WorkManager.getInstance(this).pruneWork()
+                }, 3000)
             } else {
                 cardSyncStatus.visibility = View.GONE
             }
+            
+            cargarTareasPendientes()
         }
     }
 
@@ -321,19 +346,42 @@ class MainActivity : AppCompatActivity() {
                             db.sitioDao().insertAll(resSitios.data)
                         }
                         if (resForm.success) {
-                            val data = resForm.data
-                            db.seccionDao().deleteByFormulario(data.id)
-                            db.formularioDao().insert(Formulario(data.id, data.nombre, data.descripcion))
-                            data.secciones.forEach { s ->
-                                db.seccionDao().insert(Seccion(s.id, data.id, s.nombre))
-                                s.preguntas.forEach { p -> db.preguntaDao().insert(Pregunta(p.id, s.id, p.descripcion, p.minImagenes, p.maxImagenes)) }
+                            val formData: FormularioApiData = resForm.data
+                            db.seccionDao().deleteByFormulario(formData.id)
+                            db.campoDao().deleteAll()
+
+                            db.formularioDao().insert(Formulario(formData.id, formData.nombre, formData.descripcion))
+                            
+                            formData.secciones.forEach { seccionApi: SeccionApiData ->
+                                db.seccionDao().insert(Seccion(seccionApi.id, formData.id, seccionApi.nombre))
+                                
+                                seccionApi.preguntas.forEach { preguntaApi: PreguntaApiData -> 
+                                    db.preguntaDao().insert(Pregunta(
+                                        preguntaApi.id, 
+                                        seccionApi.id, 
+                                        preguntaApi.descripcion, 
+                                        preguntaApi.minImagenes, 
+                                        preguntaApi.maxImagenes
+                                    ))
+                                    
+                                    val camposDinamicos = preguntaApi.campos.map { campoApi: CampoApiData ->
+                                        Campo(campoApi.id, preguntaApi.id, campoApi.tipo, campoApi.label, campoApi.orden)
+                                    }
+                                    db.campoDao().insertAll(camposDinamicos)
+                                }
                             }
                         }
                     }
                 }
-                if (showToast) Toast.makeText(this@MainActivity, "Datos actualizados", Toast.LENGTH_SHORT).show()
+                if (showToast) {
+                    withContext(Dispatchers.Main) {
+                        Toast.makeText(this@MainActivity, "Datos actualizados", Toast.LENGTH_SHORT).show()
+                    }
+                }
                 cargarTareasPendientes()
-            } catch (e: Exception) { Log.e("SYNC", e.message ?: "") }
+            } catch (e: Exception) { 
+                Log.e("SYNC", e.message ?: "Error desconocido") 
+            }
         }
     }
 }

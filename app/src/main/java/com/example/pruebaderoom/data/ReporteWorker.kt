@@ -50,14 +50,21 @@ class ReporteWorker(
             // Reportamos estado inicial
             setProgress(workDataOf("STATUS" to "WAITING", "PROGRESS" to 0))
 
-            // --- PASO 1: Metadatos ---
+            // --- PASO 1: Metadatos (CON FORMATO DE PREGUNTA COMPUESTA) ---
+            val listaRespuestasSync = respuestasLocal.map { resp ->
+                val valores = db.valorRespuestaDao().getByRespuesta(resp.idRespuesta).map { v ->
+                    SyncValorRequest(v.idCampo, v.valor)
+                }
+                SyncRespuestaRequest(resp.idPregunta, valores)
+            }
+
             val syncRequest = SyncTareaRequest(
                 uuid = tarea.uuid,
                 sitio_id = tarea.idSitio,
                 formulario_id = tarea.idFormulario,
                 fecha = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault()).format(tarea.fecha),
                 tipo_mantenimiento = "MP",
-                respuestas = respuestasLocal.map { SyncRespuestaRequest(it.idPregunta, it.texto) }
+                respuestas = listaRespuestasSync
             )
 
             Log.d("CRITICAL_DEBUG", "Enviando Paso 1 (Metadatos) al servidor...")
@@ -65,7 +72,7 @@ class ReporteWorker(
             
             if (!responseTarea.isSuccessful) {
                 setProgress(workDataOf("STATUS" to "ERROR"))
-                Log.e("CRITICAL_DEBUG", "Fallo Paso 1: Código ${responseTarea.code()}")
+                Log.e("CRITICAL_DEBUG", "Fallo Paso 1: Código ${responseTarea.code()} - ${responseTarea.errorBody()?.string()}")
                 return ListenableWorker.Result.retry()
             }
 
@@ -75,7 +82,10 @@ class ReporteWorker(
 
             val mapping = body.data
             val tareaIdServidor = mapping.tarea_id
-            val mapPreguntaRespuesta = mapping.respuestas.associate { it.pregunta_id to it.respuesta_id }
+            
+            // Lógica de mapeo: pregunta_id -> respuesta_id del servidor (para fotos)
+            val mapPreguntaRespuesta = mapping.mapa_respuestas.associate { it.pregunta_id to it.respuesta_id }
+            Log.i("CRITICAL_DEBUG", "Paso 1 EXITOSO. Tarea Server ID: $tareaIdServidor. Mapeo: $mapPreguntaRespuesta")
 
             // --- PASO 2: Subida de Imágenes ---
             val todasLasImagenes = mutableListOf<Imagen>()
@@ -92,7 +102,11 @@ class ReporteWorker(
                 val respLocal = respuestasLocal.find { it.idRespuesta == img.idRespuesta }
                 val serverRespuestaId = mapPreguntaRespuesta[respLocal?.idPregunta ?: -1]
 
-                if (serverRespuestaId == null) continue
+                if (serverRespuestaId == null) {
+                    Log.e("CRITICAL_DEBUG", "Saltando foto: No hay mapeo para la pregunta ${respLocal?.idPregunta}")
+                    fotosContadas++
+                    continue
+                }
 
                 if (img.isSynced) {
                     fotosContadas++
@@ -105,6 +119,7 @@ class ReporteWorker(
                     continue
                 }
 
+                Log.i("CRITICAL_DEBUG", "Subiendo foto para respuesta_id: $serverRespuestaId")
                 val exitoFoto = enviarImagenIndividual(tareaIdServidor, serverRespuestaId, img, file, fotosContadas, totalFotos)
 
                 if (exitoFoto) {
@@ -135,7 +150,6 @@ class ReporteWorker(
     private suspend fun enviarImagenIndividual(tId: Long, rId: Long, img: Imagen, file: File, index: Int, total: Int): Boolean {
         return try {
             val requestBody = ProgressRequestBody(file, "image/jpeg") { percent ->
-                // Usamos setProgressAsync porque estamos dentro de un callback no-suspend
                 setProgressAsync(workDataOf(
                     "PROGRESS" to percent,
                     "CURRENT_IMG" to index + 1,
@@ -163,6 +177,7 @@ class ReporteWorker(
                     val f = File(it.rutaArchivo)
                     if (f.exists()) f.delete() 
                 }
+                db.valorRespuestaDao().deleteByRespuesta(r.idRespuesta) // Limpiar nuevos campos
                 db.imagenDao().deleteByRespuesta(r.idRespuesta)
             }
             db.respuestaDao().deleteByTarea(idTarea)

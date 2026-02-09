@@ -25,13 +25,18 @@ interface RespuestaDao {
     @Query("SELECT * FROM Respuesta WHERE id_tarea = :idTarea")
     suspend fun getByTarea(idTarea: Long): List<Respuesta>
 
+    @Query("SELECT * FROM Respuesta WHERE id_respuesta = :id")
+    suspend fun getById(id: Long): Respuesta?
+
     @Delete
     suspend fun delete(respuesta: Respuesta)
 
     /**
      * Borra todas las respuestas vinculadas a una tarea específica.
-     * Cambiamos el retorno a Int para solucionar el error de compilación.
      */
     @Query("DELETE FROM Respuesta WHERE id_tarea = :idTarea")
     suspend fun deleteByTarea(idTarea: Long): Int
+
+    @Query("DELETE FROM Respuesta WHERE id_respuesta = :id")
+    suspend fun deleteById(id: Long)
 }

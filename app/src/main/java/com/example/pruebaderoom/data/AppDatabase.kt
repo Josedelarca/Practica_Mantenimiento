@@ -17,9 +17,11 @@ import com.example.pruebaderoom.data.entity.*
         Seccion::class,
         Pregunta::class,
         Respuesta::class,
-        Imagen::class
+        Imagen::class,
+        Campo::class,
+        ValorRespuesta::class
     ],
-    version = 8, // Subimos a 7
+    version = 9, 
     exportSchema = false
 )
 @TypeConverters(Converters::class)
@@ -32,6 +34,8 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun preguntaDao(): PreguntaDao
     abstract fun respuestaDao(): RespuestaDao
     abstract fun imagenDao(): ImagenDao
+    abstract fun campoDao(): CampoDao
+    abstract fun valorRespuestaDao(): ValorRespuestaDao
 
     companion object {
         @Volatile
