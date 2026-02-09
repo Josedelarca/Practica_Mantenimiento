@@ -149,7 +149,7 @@ class Respuesta : AppCompatActivity() {
                 minFotosRequeridas = it.minImagenes
                 maxFotosPermitidas = it.maxImagenes
                 txtPregunta.text = it.descripcion
-                txtRequisitos.text = "Mínimo: $minFotosRequeridas fotos"
+                actualizarTextoContador()
             }
             s?.let { txtSeccion.text = "SECCIÓN: ${it.nombre.uppercase()}" }
 
@@ -163,11 +163,21 @@ class Respuesta : AppCompatActivity() {
                             withContext(Dispatchers.Main) {
                                 listaFotos.add(FotoEvidencia(bitmap, img.rutaArchivo))
                                 adapter.notifyItemInserted(listaFotos.size - 1)
+                                actualizarTextoContador()
                             }
                         }
                     }
                 }
             }
+        }
+    }
+
+    private fun actualizarTextoContador() {
+        txtRequisitos.text = "Evidencia: ${listaFotos.size} fotos tomadas / Mínimo: $minFotosRequeridas"
+        if (listaFotos.size >= minFotosRequeridas) {
+            txtRequisitos.setTextColor(Color.parseColor("#43A047")) // Verde si cumple
+        } else {
+            txtRequisitos.setTextColor(Color.parseColor("#1E2A44")) // Azul/Gris si no
         }
     }
 
@@ -227,13 +237,11 @@ class Respuesta : AppCompatActivity() {
     }
 
     private fun validarYGuardar() {
-        // 1. Validar Fotos
         if (listaFotos.size < minFotosRequeridas) {
             Toast.makeText(this, "Faltan fotos ($minFotosRequeridas mín)", Toast.LENGTH_SHORT).show()
             return
         }
 
-        // 2. Validar Campos Dinámicos
         var todosLlenos = true
         mapaVistasCampos.values.forEach { vista ->
             when (vista) {
@@ -251,14 +259,12 @@ class Respuesta : AppCompatActivity() {
             return
         }
 
-        // Si todo está bien, guardamos
         guardarTodoYFinalizar()
     }
 
     private fun guardarTodoYFinalizar() {
         lifecycleScope.launch {
             withContext(Dispatchers.IO) {
-                // 1. Asegurar que exista la respuesta padre
                 if (idRespuestaActual == -1L) {
                     idRespuestaActual = System.currentTimeMillis()
                     db.respuestaDao().insert(RespuestaEntity(idRespuestaActual, idPreguntaRecibido, idTareaRecibido, "Finalizado", Date()))
@@ -269,7 +275,6 @@ class Respuesta : AppCompatActivity() {
                     }
                 }
 
-                // 2. Guardar valores de los campos
                 val nuevosValores = mutableListOf<ValorRespuesta>()
                 mapaVistasCampos.forEach { (idCampo, vista) ->
                     val valorStr = when (vista) {
@@ -303,6 +308,16 @@ class Respuesta : AppCompatActivity() {
             }
             listaFotos.removeAt(posicion)
             adapter.notifyItemRemoved(posicion)
+            
+            // SI SE ELIMINAN TODAS LAS FOTOS, EL ESTADO VUELVE A "EN PROCESO"
+            if (listaFotos.isEmpty()) {
+                withContext(Dispatchers.IO) {
+                    val r = db.respuestaDao().getById(idRespuestaActual)
+                    r?.let { db.respuestaDao().insert(it.copy(texto = "En proceso")) }
+                }
+            }
+            
+            actualizarTextoContador()
         }
     }
 
@@ -386,6 +401,7 @@ class Respuesta : AppCompatActivity() {
                 }
                 listaFotos.add(FotoEvidencia(bitmap, nuevaRuta))
                 adapter.notifyItemInserted(listaFotos.size - 1)
+                actualizarTextoContador()
             } catch (e: Exception) {
                 Toast.makeText(this@Respuesta, "Error al guardar foto", Toast.LENGTH_SHORT).show()
             }

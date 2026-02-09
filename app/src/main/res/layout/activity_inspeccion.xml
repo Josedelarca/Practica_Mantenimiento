@@ -40,7 +40,7 @@
         app:layout_constraintStart_toEndOf="@id/btnVolverInicio"
         app:layout_constraintEnd_toEndOf="parent"/>
 
-    <!-- CONTENEDOR PARA EL BOTÓN (Fijado abajo) -->
+    <!-- CONTENEDOR PARA EL BOTÓN (Fijado abajo con margen) -->
     <FrameLayout
         android:id="@+id/containerBotonEnviar"
         android:layout_width="match_parent"
@@ -48,6 +48,7 @@
         android:background="#FFFFFF"
         android:elevation="8dp"
         android:padding="16dp"
+        android:layout_marginBottom="32dp"
         app:layout_constraintBottom_toBottomOf="parent">
 
         <com.google.android.material.button.MaterialButton
