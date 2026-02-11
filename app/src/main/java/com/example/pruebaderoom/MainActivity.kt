@@ -20,13 +20,10 @@ import androidx.lifecycle.lifecycleScope
 import androidx.room.withTransaction
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
+import com.example.pruebaderoom.data.*
 import com.example.pruebaderoom.data.AppDatabase
 import com.example.pruebaderoom.data.RetrofitClient
 import com.example.pruebaderoom.data.entity.*
-import com.example.pruebaderoom.data.FormularioApiData
-import com.example.pruebaderoom.data.SeccionApiData
-import com.example.pruebaderoom.data.PreguntaApiData
-import com.example.pruebaderoom.data.CampoApiData
 import com.google.android.material.button.MaterialButton
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
@@ -88,7 +85,7 @@ class MainActivity : AppCompatActivity() {
 
         btnSync.setOnClickListener {
             if (isNetworkAvailable()) {
-                Toast.makeText(this, "Actualizando Información", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Sincronizando con el servidor...", Toast.LENGTH_SHORT).show()
                 sincronizarTodo(showToast = true)
             }
         }
@@ -115,17 +112,10 @@ class MainActivity : AppCompatActivity() {
 
         btnpasar.setOnClickListener {
             sitioSeleccionado?.let { sitio ->
-                lifecycleScope.launch {
-                    val tareaExistente = withContext(Dispatchers.IO) {
-                        db.tareaDao().getTareaActivaPorSitio(sitio.idSitio)
-                    }
-                    if (tareaExistente != null) {
-                        irAInspeccion(tareaExistente.idTarea)
-                    } else {
-                        crearNuevaTarea(sitio)
-                    }
-                }
-            } ?: Toast.makeText(this, "Selecciona un sitio", Toast.LENGTH_SHORT).show()
+                val intent = Intent(this, SeleccionFormularioActivity::class.java)
+                intent.putExtra("ID_SITIO", sitio.idSitio)
+                startActivity(intent)
+            } ?: Toast.makeText(this, "Selecciona un sitio primero", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -337,35 +327,44 @@ class MainActivity : AppCompatActivity() {
             try {
                 withContext(Dispatchers.IO) {
                     val resSitios = RetrofitClient.instance.getSitios()
-                    val resForm = RetrofitClient.instance.getFormularioCompleto(1L)
+                    val resFormsList = RetrofitClient.instance.getListaFormularios()
+
                     db.withTransaction {
                         if (resSitios.data.isNotEmpty()) {
                             db.sitioDao().deleteAll()
                             db.sitioDao().insertAll(resSitios.data)
                         }
-                        if (resForm.success) {
-                            val formData: FormularioApiData = resForm.data
-                            db.seccionDao().deleteByFormulario(formData.id)
+                        
+                        if (resFormsList.data.isNotEmpty()) {
+                            db.formularioDao().deleteAll()
+                            db.seccionDao().deleteAll()
+                            db.preguntaDao().deleteAll()
                             db.campoDao().deleteAll()
 
-                            db.formularioDao().insert(Formulario(formData.id, formData.nombre, formData.descripcion))
-                            
-                            formData.secciones.forEach { seccionApi: SeccionApiData ->
-                                db.seccionDao().insert(Seccion(seccionApi.id, formData.id, seccionApi.nombre))
-                                
-                                seccionApi.preguntas.forEach { preguntaApi: PreguntaApiData -> 
-                                    db.preguntaDao().insert(Pregunta(
-                                        preguntaApi.id, 
-                                        seccionApi.id, 
-                                        preguntaApi.descripcion, 
-                                        preguntaApi.minImagenes, 
-                                        preguntaApi.maxImagenes
-                                    ))
+                            resFormsList.data.forEach { formShort ->
+                                val resFull = RetrofitClient.instance.getFormularioCompleto(formShort.id)
+                                if (resFull.success) {
+                                    val apiForm = resFull.data
+                                    db.formularioDao().insert(Formulario(apiForm.id, apiForm.nombre, apiForm.descripcion))
                                     
-                                    val camposDinamicos = preguntaApi.campos.map { campoApi: CampoApiData ->
-                                        Campo(campoApi.id, preguntaApi.id, campoApi.tipo, campoApi.label, campoApi.orden)
+                                    apiForm.secciones.forEach { apiSec: com.example.pruebaderoom.data.SeccionApiData ->
+                                        db.seccionDao().insert(Seccion(apiSec.id, apiForm.id, apiSec.nombre))
+                                        
+                                        apiSec.preguntas.forEach { apiPreg: com.example.pruebaderoom.data.PreguntaApiData ->
+                                            db.preguntaDao().insert(Pregunta(
+                                                apiPreg.id, 
+                                                apiSec.id, 
+                                                apiPreg.descripcion, 
+                                                apiPreg.minImagenes, 
+                                                apiPreg.maxImagenes
+                                            ))
+                                            
+                                            val camposDb = apiPreg.campos.map { apiCampo: com.example.pruebaderoom.data.CampoApiData ->
+                                                Campo(apiCampo.id, apiPreg.id, apiCampo.tipo, apiCampo.label, apiCampo.orden)
+                                            }
+                                            db.campoDao().insertAll(camposDb)
+                                        }
                                     }
-                                    db.campoDao().insertAll(camposDinamicos)
                                 }
                             }
                         }
@@ -373,12 +372,12 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (showToast) {
                     withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Datos actualizados", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this@MainActivity, "Actualización exitosa", Toast.LENGTH_SHORT).show()
                     }
                 }
                 cargarTareasPendientes()
             } catch (e: Exception) { 
-                Log.e("SYNC", e.message ?: "Error desconocido") 
+                Log.e("SYNC", e.message ?: "Error desconocido")
             }
         }
     }

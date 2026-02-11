@@ -29,4 +29,7 @@ interface SeccionDao {
 
     @Query("DELETE FROM Seccion WHERE id_formulario = :idFormulario")
     suspend fun deleteByFormulario(idFormulario: Long)
+
+    @Query("DELETE FROM Seccion")
+    suspend fun deleteAll()
 }

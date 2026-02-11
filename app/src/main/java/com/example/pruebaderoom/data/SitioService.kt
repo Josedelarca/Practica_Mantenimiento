@@ -12,6 +12,9 @@ interface SitioService {
     @GET("api/sitios")
     suspend fun getSitios(): SitioResponse
 
+    @GET("api/formularios")
+    suspend fun getListaFormularios(): FormularioListResponse
+
     @GET("api/formularios/{id}")
     suspend fun getFormularioCompleto(@Path("id") id: Long): FormularioFullResponse
 
@@ -27,7 +30,6 @@ interface SitioService {
         @Part imagen: MultipartBody.Part
     ): Response<Unit>
 
-    // Este método es necesario para ReporteManager
     @Multipart
     @POST("api/tareas/bulk")
     suspend fun enviarReporte(
@@ -36,7 +38,20 @@ interface SitioService {
     ): Response<Unit>
 }
 
-// --- DATA CLASSES PARA ENVÍO ---
+// --- DATA CLASSES PARA MÚLTIPLES FORMULARIOS ---
+
+data class FormularioListResponse(
+    @SerializedName("data")
+    val data: List<FormularioApiShort>
+)
+
+data class FormularioApiShort(
+    val id: Long,
+    val nombre: String,
+    val descripcion: String
+)
+
+// --- DATA CLASSES PARA SINCRONIZACIÓN ---
 
 data class SyncTareaRequest(
     val uuid: String,

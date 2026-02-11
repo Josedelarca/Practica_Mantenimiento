@@ -39,6 +39,10 @@ class ReporteWorker(
                 return ListenableWorker.Result.failure()
             }
 
+            // OBTENER NOMBRE DEL SITIO
+            val sitio = db.sitioDao().getById(tarea.idSitio)
+            val nombreSitio = sitio?.nombre ?: "Sitio"
+
             val respuestasLocal = db.respuestaDao().getByTarea(idTareaLocal)
             Log.i("CRITICAL_DEBUG", "Respuestas locales encontradas: ${respuestasLocal.size}")
 
@@ -48,9 +52,9 @@ class ReporteWorker(
             }
 
             // Reportamos estado inicial
-            setProgress(workDataOf("STATUS" to "WAITING", "PROGRESS" to 0))
+            setProgress(workDataOf("STATUS" to "WAITING", "PROGRESS" to 0, "SITIO_NOMBRE" to nombreSitio))
 
-            // --- PASO 1: Metadatos (CON FORMATO DE PREGUNTA COMPUESTA) ---
+            // --- PASO 1: Metadatos ---
             val listaRespuestasSync = respuestasLocal.map { resp ->
                 val valores = db.valorRespuestaDao().getByRespuesta(resp.idRespuesta).map { v ->
                     SyncValorRequest(v.idCampo, v.valor)
@@ -71,8 +75,8 @@ class ReporteWorker(
             val responseTarea = api.crearTarea(syncRequest)
             
             if (!responseTarea.isSuccessful) {
-                setProgress(workDataOf("STATUS" to "ERROR"))
-                Log.e("CRITICAL_DEBUG", "Fallo Paso 1: Código ${responseTarea.code()} - ${responseTarea.errorBody()?.string()}")
+                setProgress(workDataOf("STATUS" to "ERROR", "SITIO_NOMBRE" to nombreSitio))
+                Log.e("CRITICAL_DEBUG", "Fallo Paso 1: Código ${responseTarea.code()}")
                 return ListenableWorker.Result.retry()
             }
 
@@ -82,10 +86,7 @@ class ReporteWorker(
 
             val mapping = body.data
             val tareaIdServidor = mapping.tarea_id
-            
-            // Lógica de mapeo: pregunta_id -> respuesta_id del servidor (para fotos)
             val mapPreguntaRespuesta = mapping.mapa_respuestas.associate { it.pregunta_id to it.respuesta_id }
-            Log.i("CRITICAL_DEBUG", "Paso 1 EXITOSO. Tarea Server ID: $tareaIdServidor. Mapeo: $mapPreguntaRespuesta")
 
             // --- PASO 2: Subida de Imágenes ---
             val todasLasImagenes = mutableListOf<Imagen>()
@@ -102,11 +103,7 @@ class ReporteWorker(
                 val respLocal = respuestasLocal.find { it.idRespuesta == img.idRespuesta }
                 val serverRespuestaId = mapPreguntaRespuesta[respLocal?.idPregunta ?: -1]
 
-                if (serverRespuestaId == null) {
-                    Log.e("CRITICAL_DEBUG", "Saltando foto: No hay mapeo para la pregunta ${respLocal?.idPregunta}")
-                    fotosContadas++
-                    continue
-                }
+                if (serverRespuestaId == null) continue
 
                 if (img.isSynced) {
                     fotosContadas++
@@ -119,21 +116,20 @@ class ReporteWorker(
                     continue
                 }
 
-                Log.i("CRITICAL_DEBUG", "Subiendo foto para respuesta_id: $serverRespuestaId")
-                val exitoFoto = enviarImagenIndividual(tareaIdServidor, serverRespuestaId, img, file, fotosContadas, totalFotos)
+                val exitoFoto = enviarImagenIndividual(tareaIdServidor, serverRespuestaId, img, file, fotosContadas, totalFotos, nombreSitio)
 
                 if (exitoFoto) {
                     db.imagenDao().updateSyncStatus(img.idImagen, true)
                     fotosContadas++
                 } else {
                     todasOk = false
-                    setProgress(workDataOf("STATUS" to "ERROR"))
+                    setProgress(workDataOf("STATUS" to "ERROR", "SITIO_NOMBRE" to nombreSitio))
                     break 
                 }
             }
 
             if (todasOk) {
-                setProgress(workDataOf("STATUS" to "SUCCESS", "PROGRESS" to 100))
+                setProgress(workDataOf("STATUS" to "SUCCESS", "PROGRESS" to 100, "SITIO_NOMBRE" to nombreSitio))
                 limpiarDispositivo(idTareaLocal, respuestasLocal)
                 ListenableWorker.Result.success()
             } else {
@@ -147,14 +143,15 @@ class ReporteWorker(
         }
     }
 
-    private suspend fun enviarImagenIndividual(tId: Long, rId: Long, img: Imagen, file: File, index: Int, total: Int): Boolean {
+    private suspend fun enviarImagenIndividual(tId: Long, rId: Long, img: Imagen, file: File, index: Int, total: Int, sitio: String): Boolean {
         return try {
             val requestBody = ProgressRequestBody(file, "image/jpeg") { percent ->
                 setProgressAsync(workDataOf(
                     "PROGRESS" to percent,
                     "CURRENT_IMG" to index + 1,
                     "TOTAL_IMG" to total,
-                    "STATUS" to "UPLOADING"
+                    "STATUS" to "UPLOADING",
+                    "SITIO_NOMBRE" to sitio
                 ))
             }
 
@@ -177,7 +174,7 @@ class ReporteWorker(
                     val f = File(it.rutaArchivo)
                     if (f.exists()) f.delete() 
                 }
-                db.valorRespuestaDao().deleteByRespuesta(r.idRespuesta) // Limpiar nuevos campos
+                db.valorRespuestaDao().deleteByRespuesta(r.idRespuesta)
                 db.imagenDao().deleteByRespuesta(r.idRespuesta)
             }
             db.respuestaDao().deleteByTarea(idTarea)

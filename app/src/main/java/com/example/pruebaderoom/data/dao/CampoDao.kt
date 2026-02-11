@@ -14,6 +14,9 @@ interface CampoDao {
     @Query("SELECT * FROM Campos WHERE id_pregunta = :idPregunta ORDER BY orden")
     suspend fun getByPregunta(idPregunta: Long): List<Campo>
 
+    @Query("DELETE FROM Campos WHERE id_pregunta IN (SELECT id_pregunta FROM Preguntas WHERE id_seccion IN (SELECT id_seccion FROM Seccion WHERE id_formulario = :idFormulario))")
+    suspend fun deleteByFormulario(idFormulario: Long)
+
     @Query("DELETE FROM Campos")
     suspend fun deleteAll()
 }

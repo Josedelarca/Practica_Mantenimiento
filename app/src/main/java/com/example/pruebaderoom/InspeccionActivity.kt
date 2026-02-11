@@ -38,7 +38,6 @@ class InspeccionActivity : AppCompatActivity() {
     private lateinit var btnEnviar: Button
     private var idTareaRecibido: Long = -1
     
-    // Mantenemos una instancia única del adaptador
     private lateinit var inspeccionAdapter: InspeccionAdapter
 
     sealed class InspeccionItem {
@@ -62,13 +61,10 @@ class InspeccionActivity : AppCompatActivity() {
         
         rvPreguntas.layoutManager = LinearLayoutManager(this)
         
-        // Inicializamos el adaptador vacío al inicio
         inspeccionAdapter = InspeccionAdapter(mutableListOf(), idTareaRecibido, db)
         rvPreguntas.adapter = inspeccionAdapter
         
         btnVolver?.setOnClickListener { finish() }
-
-        sincronizarFormulario(1L)
 
         btnEnviar.setOnClickListener {
             programarSincronizacionWorker()
@@ -76,6 +72,9 @@ class InspeccionActivity : AppCompatActivity() {
         
         actualizarEstadoBotonEnvio()
         observarProgresoEnvio()
+        
+        // Iniciamos la carga de datos
+        cargarYMostrar()
     }
 
     private fun observarProgresoEnvio() {
@@ -146,53 +145,11 @@ class InspeccionActivity : AppCompatActivity() {
         }
     }
 
-    private fun sincronizarFormulario(id: Long) {
-        lifecycleScope.launch {
-            try {
-                val response = withContext(Dispatchers.IO) { RetrofitClient.instance.getFormularioCompleto(id) }
-
-                if (response.success) {
-                    val formData = response.data
-                    
-                    db.withTransaction {
-                        db.formularioDao().insert(Formulario(formData.id, formData.nombre, formData.descripcion))
-                        db.seccionDao().deleteByFormulario(formData.id)
-                        db.campoDao().deleteAll()
-
-                        formData.secciones.forEach { seccionApi ->
-                            db.seccionDao().insert(Seccion(seccionApi.id, formData.id, seccionApi.nombre))
-                            
-                            seccionApi.preguntas.forEach { preguntaApi -> 
-                                db.preguntaDao().insert(Pregunta(
-                                    preguntaApi.id, 
-                                    seccionApi.id, 
-                                    preguntaApi.descripcion, 
-                                    preguntaApi.minImagenes,
-                                    preguntaApi.maxImagenes
-                                ))
-                                
-                                val camposDinamicos = preguntaApi.campos.map { campoApi ->
-                                    Campo(campoApi.id, preguntaApi.id, campoApi.tipo, campoApi.label, campoApi.orden)
-                                }
-                                db.campoDao().insertAll(camposDinamicos)
-                            }
-                        }
-                    }
-
-                    cargarYMostrar()
-                    actualizarEstadoBotonEnvio()
-                }
-            } catch (e: Exception) {
-                Log.e("API", "Error al sincronizar formulario: ${e.message}")
-                cargarYMostrar()
-            }
-        }
-    }
-
     private fun actualizarEstadoBotonEnvio() {
         lifecycleScope.launch {
             val estaCompleto = withContext(Dispatchers.IO) {
-                val preguntas = db.preguntaDao().getAll()
+                val tarea = db.tareaDao().getById(idTareaRecibido) ?: return@withContext false
+                val preguntas = db.preguntaDao().getByFormulario(tarea.idFormulario)
                 if (preguntas.isEmpty()) return@withContext false
                 
                 preguntas.all { pregunta ->
@@ -223,7 +180,14 @@ class InspeccionActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val hibrido = withContext(Dispatchers.IO) {
                 val list = mutableListOf<InspeccionItem>()
-                val secciones = db.seccionDao().getAll()
+                
+                // 1. Obtener la tarea para saber qué formulario usar
+                val tarea = db.tareaDao().getById(idTareaRecibido)
+                if (tarea == null) return@withContext list
+
+                // 2. Filtrar secciones solo por este formulario
+                val secciones = db.seccionDao().getByFormulario(tarea.idFormulario)
+                
                 secciones.forEach { s ->
                     list.add(InspeccionItem.SeccionHeader(s))
                     val preguntas = db.preguntaDao().getBySeccion(s.idSeccion)
@@ -232,12 +196,15 @@ class InspeccionActivity : AppCompatActivity() {
                 list
             }
             
-            // Actualizamos los datos del adaptador existente en lugar de crear uno nuevo
             inspeccionAdapter.updateData(hibrido)
 
-            if (hibrido.isNotEmpty()) {
-                val info = withContext(Dispatchers.IO) { db.formularioDao().getById(1L) }
-                txtTituloFormulario.text = info?.nombre ?: "Inspección"
+            // Actualizar título con el nombre del formulario
+            withContext(Dispatchers.IO) {
+                val tarea = db.tareaDao().getById(idTareaRecibido)
+                val formInfo = tarea?.let { db.formularioDao().getById(it.idFormulario) }
+                withContext(Dispatchers.Main) {
+                    txtTituloFormulario.text = formInfo?.nombre ?: "Inspección"
+                }
             }
         }
     }
@@ -270,15 +237,20 @@ class InspeccionActivity : AppCompatActivity() {
             if (holder is SeccionViewHolder && item is InspeccionItem.SeccionHeader) {
                 holder.txtNombre.text = item.seccion.nombre
             } else if (holder is PreguntaViewHolder && item is InspeccionItem.PreguntaItem) {
-                holder.txtDesc.text = item.pregunta.descripcion
-                holder.txtCant.text = "Mínimo: ${item.pregunta.minImagenes} fotos"
+                val pregunta = item.pregunta
+                holder.txtDesc.text = pregunta.descripcion
                 
                 (holder.itemView.context as InspeccionActivity).lifecycleScope.launch {
-                    val respuesta = withContext(Dispatchers.IO) {
-                        database.respuestaDao().getAll().find {
-                            it.idPregunta == item.pregunta.idPregunta && it.idTarea == idTarea
+                    val (respuesta, cantFotos) = withContext(Dispatchers.IO) {
+                        val resp = database.respuestaDao().getAll().find {
+                            it.idPregunta == pregunta.idPregunta && it.idTarea == idTarea
                         }
+                        val count = resp?.let { database.imagenDao().getByRespuesta(it.idRespuesta).size } ?: 0
+                        Pair(resp, count)
                     }
+
+                    holder.txtCant.text = "Fotos: $cantFotos / Mínimo: ${pregunta.minImagenes}"
+                    holder.txtCant.setTextColor(if (cantFotos >= pregunta.minImagenes) Color.parseColor("#43A047") else Color.parseColor("#757575"))
 
                     when {
                         respuesta?.texto == "Finalizado" -> {
@@ -301,7 +273,7 @@ class InspeccionActivity : AppCompatActivity() {
 
                 holder.btnCamara.setOnClickListener {
                     val intent = Intent(holder.itemView.context, com.example.pruebaderoom.Respuesta::class.java)
-                    intent.putExtra("ID_PREGUNTA", item.pregunta.idPregunta)
+                    intent.putExtra("ID_PREGUNTA", pregunta.idPregunta)
                     intent.putExtra("ID_TAREA", idTarea) 
                     holder.itemView.context.startActivity(intent)
                 }
