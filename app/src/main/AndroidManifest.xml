@@ -28,6 +28,13 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- REGISTRO DE ACTIVIDADES -->
+        <activity
+            android:name=".EstadoProyectoActivity"
+            android:exported="false" />
+        <activity
+            android:name=".HistorialActivity"
+            android:exported="false" />
         <activity
             android:name=".SeleccionFormularioActivity"
             android:exported="false" />

@@ -6,7 +6,6 @@ import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
-import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
@@ -22,7 +21,6 @@ import com.example.pruebaderoom.data.entity.*
 import com.example.pruebaderoom.data.SeccionApiData
 import com.example.pruebaderoom.data.PreguntaApiData
 import com.example.pruebaderoom.data.CampoApiData
-import com.google.android.material.card.MaterialCardView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -32,7 +30,6 @@ class SeleccionFormularioActivity : AppCompatActivity() {
 
     private lateinit var db: AppDatabase
     private lateinit var rvFormularios: RecyclerView
-    private lateinit var progressBar: ProgressBar
     private var idSitioRecibido: Long = -1
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -44,7 +41,7 @@ class SeleccionFormularioActivity : AppCompatActivity() {
         db = AppDatabase.getDatabase(this)
         
         rvFormularios = findViewById(R.id.rvFormularios)
-        progressBar = findViewById(R.id.pbLoadingForms)
+        findViewById<ProgressBar>(R.id.pbLoadingForms).visibility = View.GONE // Oculto por defecto
         
         rvFormularios.layoutManager = LinearLayoutManager(this)
 
@@ -54,24 +51,19 @@ class SeleccionFormularioActivity : AppCompatActivity() {
     }
 
     private fun cargarListaFormularios() {
-        progressBar.visibility = View.VISIBLE
         lifecycleScope.launch {
-            try {
-                // 1. Cargar local primero para rapidez
-                val listaLocal = withContext(Dispatchers.IO) {
-                    db.formularioDao().getAll().map { FormularioApiShort(it.idFormulario, it.nombre, it.descripcion) }
-                }
-                if (listaLocal.isNotEmpty()) {
-                    mostrarLista(listaLocal)
-                    progressBar.visibility = View.GONE
-                }
+            // 1. Mostrar lo que ya tenemos (Instantáneo)
+            val listaLocal = withContext(Dispatchers.IO) {
+                db.formularioDao().getAll().map { FormularioApiShort(it.idFormulario, it.nombre, it.descripcion) }
+            }
+            if (listaLocal.isNotEmpty()) {
+                mostrarLista(listaLocal)
+            }
 
-                // 2. Intentar actualizar desde la API
-                val response = withContext(Dispatchers.IO) {
-                    RetrofitClient.instance.getListaFormularios()
-                }
-                
-                val listaApi = response.data // Accedemos al array dentro de "data"
+            // 2. Actualizar desde API en silencio (segundo plano)
+            try {
+                val response = withContext(Dispatchers.IO) { RetrofitClient.instance.getListaFormularios() }
+                val listaApi = response.data
                 
                 withContext(Dispatchers.IO) {
                     listaApi.forEach { 
@@ -80,12 +72,7 @@ class SeleccionFormularioActivity : AppCompatActivity() {
                 }
                 mostrarLista(listaApi)
             } catch (e: Exception) {
-                Log.e("FORM_LOAD", "Error cargando lista: ${e.message}")
-                if (rvFormularios.adapter == null) {
-                    Toast.makeText(this@SeleccionFormularioActivity, "Error de conexión", Toast.LENGTH_SHORT).show()
-                }
-            } finally {
-                progressBar.visibility = View.GONE
+                Log.e("FORM_LOAD", "Actualización silenciosa falló")
             }
         }
     }
@@ -98,15 +85,16 @@ class SeleccionFormularioActivity : AppCompatActivity() {
 
     private fun verificarYEntrar(idFormulario: Long) {
         lifecycleScope.launch {
-            progressBar.visibility = View.VISIBLE
-            // Verificamos si ya tenemos la estructura guardada localmente
+            // Verificamos si ya tenemos la estructura localmente
             val tieneEstructura = withContext(Dispatchers.IO) {
                 db.seccionDao().getByFormulario(idFormulario).isNotEmpty()
             }
 
             if (tieneEstructura) {
+                // ENTRADA INSTANTÁNEA (Sin "cargando")
                 manejarTareaYEntrar(idFormulario)
             } else {
+                // Descarga solo si es la primera vez
                 descargarEstructuraYEntrar(idFormulario)
             }
         }
@@ -124,9 +112,7 @@ class SeleccionFormularioActivity : AppCompatActivity() {
                     data.secciones.forEach { s: SeccionApiData ->
                         db.seccionDao().insert(Seccion(s.id, data.id, s.nombre))
                         s.preguntas.forEach { p: PreguntaApiData ->
-                            // CORRECCIÓN: Nombres de propiedades minImagenes y maxImagenes
                             db.preguntaDao().insert(Pregunta(p.id, s.id, p.descripcion, p.minImagenes, p.maxImagenes))
-                            
                             val campos = p.campos.map { Campo(it.id, p.id, it.tipo, it.label, it.orden) }
                             db.campoDao().insertAll(campos)
                         }
@@ -135,10 +121,8 @@ class SeleccionFormularioActivity : AppCompatActivity() {
                 manejarTareaYEntrar(idFormulario)
             }
         } catch (e: Exception) {
-            Log.e("FORM_SYNC", "Error descargando estructura: ${e.message}")
             withContext(Dispatchers.Main) {
                 Toast.makeText(this@SeleccionFormularioActivity, "No se pudo descargar el formulario", Toast.LENGTH_SHORT).show()
-                progressBar.visibility = View.GONE
             }
         }
     }
@@ -160,7 +144,6 @@ class SeleccionFormularioActivity : AppCompatActivity() {
 
     private fun irAInspeccion(idTarea: Long) {
         startActivity(Intent(this, InspeccionActivity::class.java).putExtra("ID_TAREA", idTarea))
-        // No hacemos finish() para permitir regresar y cambiar de formulario si se desea
     }
 
     class FormularioAdapter(

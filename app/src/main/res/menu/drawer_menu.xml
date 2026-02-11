@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android">
+    <group android:checkableBehavior="single">
+        <item
+            android:id="@+id/nav_inicio"
+            android:icon="@drawable/ic_launcher_foreground"
+            android:title="Inicio" />
+        <item
+            android:id="@+id/nav_historial"
+            android:icon="@drawable/ic_launcher_foreground"
+            android:title="Historial de Envíos" />
+        <item
+            android:id="@+id/nav_estado"
+            android:icon="@drawable/ic_launcher_foreground"
+            android:title="Estado del Proyecto" />
+    </group>
+</menu>

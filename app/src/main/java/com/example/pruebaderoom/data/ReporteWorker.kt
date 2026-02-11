@@ -7,6 +7,7 @@ import androidx.work.WorkerParameters
 import androidx.work.ListenableWorker
 import androidx.work.workDataOf
 import com.example.pruebaderoom.data.entity.Imagen
+import com.example.pruebaderoom.data.entity.HistorialEnvio
 import com.example.pruebaderoom.data.entity.Respuesta as RespuestaEntity
 import okhttp3.MediaType
 import okhttp3.MultipartBody
@@ -25,36 +26,20 @@ class ReporteWorker(
 
     override suspend fun doWork(): ListenableWorker.Result {
         val idTareaLocal = inputData.getLong("ID_TAREA", -1L)
-        Log.i("CRITICAL_DEBUG", ">>> [WORKER START] Tarea Local ID: $idTareaLocal")
-
-        if (idTareaLocal == -1L) {
-            Log.e("CRITICAL_DEBUG", "ID de tarea inválido recibido en el Worker")
-            return ListenableWorker.Result.failure()
-        }
+        if (idTareaLocal == -1L) return ListenableWorker.Result.failure()
 
         return try {
-            val tarea = db.tareaDao().getById(idTareaLocal) 
-            if (tarea == null) {
-                Log.e("CRITICAL_DEBUG", "No se encontró la tarea $idTareaLocal en la DB")
-                return ListenableWorker.Result.failure()
-            }
-
-            // OBTENER NOMBRE DEL SITIO
+            val tarea = db.tareaDao().getById(idTareaLocal) ?: return ListenableWorker.Result.failure()
             val sitio = db.sitioDao().getById(tarea.idSitio)
+            val form = db.formularioDao().getById(tarea.idFormulario)
             val nombreSitio = sitio?.nombre ?: "Sitio"
 
             val respuestasLocal = db.respuestaDao().getByTarea(idTareaLocal)
-            Log.i("CRITICAL_DEBUG", "Respuestas locales encontradas: ${respuestasLocal.size}")
+            if (respuestasLocal.isEmpty()) return ListenableWorker.Result.success()
 
-            if (respuestasLocal.isEmpty()) {
-                Log.w("CRITICAL_DEBUG", "La tarea no tiene respuestas asociadas. Nada que sincronizar.")
-                return ListenableWorker.Result.success()
-            }
-
-            // Reportamos estado inicial
             setProgress(workDataOf("STATUS" to "WAITING", "PROGRESS" to 0, "SITIO_NOMBRE" to nombreSitio))
 
-            // --- PASO 1: Metadatos ---
+            // PASO 1: Metadatos
             val listaRespuestasSync = respuestasLocal.map { resp ->
                 val valores = db.valorRespuestaDao().getByRespuesta(resp.idRespuesta).map { v ->
                     SyncValorRequest(v.idCampo, v.valor)
@@ -71,28 +56,17 @@ class ReporteWorker(
                 respuestas = listaRespuestasSync
             )
 
-            Log.d("CRITICAL_DEBUG", "Enviando Paso 1 (Metadatos) al servidor...")
             val responseTarea = api.crearTarea(syncRequest)
-            
-            if (!responseTarea.isSuccessful) {
-                setProgress(workDataOf("STATUS" to "ERROR", "SITIO_NOMBRE" to nombreSitio))
-                Log.e("CRITICAL_DEBUG", "Fallo Paso 1: Código ${responseTarea.code()}")
-                return ListenableWorker.Result.retry()
-            }
+            if (!responseTarea.isSuccessful) return ListenableWorker.Result.retry()
 
-            val body = responseTarea.body() ?: run {
-                return ListenableWorker.Result.failure()
-            }
-
-            val mapping = body.data
+            val mapping = responseTarea.body()?.data ?: return ListenableWorker.Result.failure()
             val tareaIdServidor = mapping.tarea_id
             val mapPreguntaRespuesta = mapping.mapa_respuestas.associate { it.pregunta_id to it.respuesta_id }
 
-            // --- PASO 2: Subida de Imágenes ---
+            // PASO 2: Imágenes
             val todasLasImagenes = mutableListOf<Imagen>()
             for (respLocal in respuestasLocal) {
-                val imgs = db.imagenDao().getByRespuesta(respLocal.idRespuesta)
-                todasLasImagenes.addAll(imgs)
+                todasLasImagenes.addAll(db.imagenDao().getByRespuesta(respLocal.idRespuesta))
             }
 
             val totalFotos = todasLasImagenes.size
@@ -103,32 +77,34 @@ class ReporteWorker(
                 val respLocal = respuestasLocal.find { it.idRespuesta == img.idRespuesta }
                 val serverRespuestaId = mapPreguntaRespuesta[respLocal?.idPregunta ?: -1]
 
-                if (serverRespuestaId == null) continue
-
-                if (img.isSynced) {
+                if (serverRespuestaId == null || img.isSynced) {
                     fotosContadas++
                     continue
                 }
 
                 val file = File(img.rutaArchivo)
-                if (!file.exists()) {
-                    fotosContadas++
-                    continue
-                }
-
-                val exitoFoto = enviarImagenIndividual(tareaIdServidor, serverRespuestaId, img, file, fotosContadas, totalFotos, nombreSitio)
-
-                if (exitoFoto) {
-                    db.imagenDao().updateSyncStatus(img.idImagen, true)
-                    fotosContadas++
+                if (file.exists()) {
+                    val exitoFoto = enviarImagenIndividual(tareaIdServidor, serverRespuestaId, img, file, fotosContadas, totalFotos, nombreSitio)
+                    if (exitoFoto) {
+                        db.imagenDao().updateSyncStatus(img.idImagen, true)
+                        fotosContadas++
+                    } else {
+                        todasOk = false
+                        break 
+                    }
                 } else {
-                    todasOk = false
-                    setProgress(workDataOf("STATUS" to "ERROR", "SITIO_NOMBRE" to nombreSitio))
-                    break 
+                    fotosContadas++
                 }
             }
 
             if (todasOk) {
+                // GUARDAR EN HISTORIAL ANTES DE LIMPIAR
+                db.historialEnvioDao().insert(HistorialEnvio(
+                    sitioNombre = nombreSitio,
+                    formularioNombre = form?.nombre ?: "Inspección",
+                    fechaEnvio = Date()
+                ))
+
                 setProgress(workDataOf("STATUS" to "SUCCESS", "PROGRESS" to 100, "SITIO_NOMBRE" to nombreSitio))
                 limpiarDispositivo(idTareaLocal, respuestasLocal)
                 ListenableWorker.Result.success()
@@ -137,8 +113,6 @@ class ReporteWorker(
             }
 
         } catch (e: Exception) {
-            setProgress(workDataOf("STATUS" to "ERROR"))
-            Log.e("CRITICAL_DEBUG", "EXCEPCIÓN EN WORKER: ${e.message}")
             ListenableWorker.Result.retry()
         }
     }
@@ -154,33 +128,25 @@ class ReporteWorker(
                     "SITIO_NOMBRE" to sitio
                 ))
             }
-
             val bodyImg = MultipartBody.Part.createFormData("imagen", file.name, requestBody)
             val bodyRId = RequestBody.create(MediaType.parse("text/plain"), rId.toString())
             val bodyUuid = RequestBody.create(MediaType.parse("text/plain"), img.uuid)
-
-            val res = api.subirImagen(tId, bodyRId, bodyUuid, bodyImg)
-            res.isSuccessful
+            api.subirImagen(tId, bodyRId, bodyUuid, bodyImg).isSuccessful
         } catch (e: Exception) {
             false
         }
     }
 
     private suspend fun limpiarDispositivo(idTarea: Long, respuestas: List<RespuestaEntity>) {
-        try {
-            respuestas.forEach { r ->
-                val fotos = db.imagenDao().getByRespuesta(r.idRespuesta)
-                fotos.forEach { 
-                    val f = File(it.rutaArchivo)
-                    if (f.exists()) f.delete() 
-                }
-                db.valorRespuestaDao().deleteByRespuesta(r.idRespuesta)
-                db.imagenDao().deleteByRespuesta(r.idRespuesta)
+        respuestas.forEach { r ->
+            db.imagenDao().getByRespuesta(r.idRespuesta).forEach { img ->
+                val f = File(img.rutaArchivo)
+                if (f.exists()) f.delete() 
             }
-            db.respuestaDao().deleteByTarea(idTarea)
-            db.tareaDao().getById(idTarea)?.let { db.tareaDao().delete(it) }
-        } catch (e: Exception) {
-            Log.e("CRITICAL_DEBUG", "Error limpieza: ${e.message}")
+            db.valorRespuestaDao().deleteByRespuesta(r.idRespuesta)
+            db.imagenDao().deleteByRespuesta(r.idRespuesta)
         }
+        db.respuestaDao().deleteByTarea(idTarea)
+        db.tareaDao().getById(idTarea)?.let { db.tareaDao().delete(it) }
     }
 }

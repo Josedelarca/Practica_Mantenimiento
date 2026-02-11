@@ -14,17 +14,19 @@ import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.view.GravityCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.drawerlayout.widget.DrawerLayout
 import androidx.lifecycle.lifecycleScope
 import androidx.room.withTransaction
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
-import com.example.pruebaderoom.data.*
 import com.example.pruebaderoom.data.AppDatabase
 import com.example.pruebaderoom.data.RetrofitClient
 import com.example.pruebaderoom.data.entity.*
 import com.google.android.material.button.MaterialButton
+import com.google.android.material.navigation.NavigationView
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
@@ -41,6 +43,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var layoutPendientes: LinearLayout
     private lateinit var containerPendientes: LinearLayout
     private lateinit var cardSyncStatus: View
+    private lateinit var drawerLayout: DrawerLayout
+    private lateinit var navView: NavigationView
     
     private lateinit var txtSyncStatus: TextView
     private lateinit var txtSyncDetail: TextView
@@ -55,26 +59,45 @@ class MainActivity : AppCompatActivity() {
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
         
-        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.main)) { v, insets ->
+        ViewCompat.setOnApplyWindowInsetsListener(findViewById(R.id.drawerLayout)) { v, insets ->
             val systemBars = insets.getInsets(WindowInsetsCompat.Type.systemBars())
             v.setPadding(systemBars.left, systemBars.top, systemBars.right, systemBars.bottom)
             insets
         }
 
         db = AppDatabase.getDatabase(this)
+        
+        drawerLayout = findViewById(R.id.drawerLayout)
+        navView = findViewById(R.id.navigationView)
+        val btnMenuToggle = findViewById<ImageButton>(R.id.btnMenuToggle)
+        val btnSyncMain = findViewById<ImageButton>(R.id.btnSyncMain)
+        
         txtInfo = findViewById(R.id.txtInfo)
         autoCompleteSitios = findViewById(R.id.autoCompleteCiudades)
         btnVerMapa = findViewById(R.id.btnVerMapa)
         layoutPendientes = findViewById(R.id.layoutPendientes)
         containerPendientes = findViewById(R.id.containerBotonesPendientes)
         cardSyncStatus = findViewById(R.id.cardSyncStatus)
-        
+
         txtSyncStatus = findViewById(R.id.txtSyncStatus)
         txtSyncDetail = findViewById(R.id.txtSyncDetail)
         progressBarHorizontal = findViewById(R.id.progressBarHorizontal)
         
         val btnpasar = findViewById<Button>(R.id.btnpasar)
-        val btnSync = findViewById<ImageButton>(R.id.btnSync)
+
+        btnMenuToggle.setOnClickListener {
+            drawerLayout.openDrawer(GravityCompat.START)
+        }
+
+        navView.setNavigationItemSelectedListener { menuItem ->
+            when (menuItem.itemId) {
+                R.id.nav_inicio -> drawerLayout.closeDrawers()
+                R.id.nav_historial -> startActivity(Intent(this, HistorialActivity::class.java))
+                R.id.nav_estado -> startActivity(Intent(this, EstadoProyectoActivity::class.java))
+            }
+            drawerLayout.closeDrawers()
+            true
+        }
 
         observarDatos()
         observarSincronizacionGlobal()
@@ -83,9 +106,9 @@ class MainActivity : AppCompatActivity() {
             sincronizarTodo(showToast = false)
         }
 
-        btnSync.setOnClickListener {
+        btnSyncMain.setOnClickListener {
             if (isNetworkAvailable()) {
-                Toast.makeText(this, "Sincronizando con el servidor...", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "Actualizando Información...", Toast.LENGTH_SHORT).show()
                 sincronizarTodo(showToast = true)
             }
         }
@@ -122,6 +145,7 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         cargarTareasPendientes() 
+        navView.setCheckedItem(R.id.nav_inicio)
     }
 
     private fun cargarTareasPendientes() {
@@ -209,15 +233,6 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun crearNuevaTarea(sitio: Sitio) {
-        lifecycleScope.launch {
-            val nuevaTareaId = System.currentTimeMillis()
-            val nuevaTarea = Tarea(nuevaTareaId, sitio.idSitio, 1L, TipoMantenimiento.PREVENTIVO, Date(), "En curso", EstadoTarea.EN_PROCESO)
-            withContext(Dispatchers.IO) { db.tareaDao().insert(nuevaTarea) }
-            irAInspeccion(nuevaTareaId)
-        }
-    }
-
     private fun actualizarInformacionSitio(sitio: Sitio) {
         lifecycleScope.launch {
             val tareaActiva = withContext(Dispatchers.IO) { db.tareaDao().getTareaActivaPorSitio(sitio.idSitio) }
@@ -240,6 +255,8 @@ class MainActivity : AppCompatActivity() {
                 VISITAS: ${sitio.visit}
                 MORFOLOGÍA: ${sitio.siteMorfology}
                 NUEVA MORFOLOGÍA: ${sitio.newMorfology}
+                LATITUD: ${sitio.latitud}
+                LONGITUD: ${sitio.longitud}
                 ESTADO: $status
             """.trimIndent()
         }
@@ -261,10 +278,11 @@ class MainActivity : AppCompatActivity() {
                 val current = infoActiva.progress.getInt("CURRENT_IMG", 0)
                 val total = infoActiva.progress.getInt("TOTAL_IMG", 0)
                 val status = infoActiva.progress.getString("STATUS") ?: "WAITING"
+                val sitio = infoActiva.progress.getString("SITIO_NOMBRE") ?: "Sincronizando"
 
                 when (status) {
                     "UPLOADING" -> {
-                        txtSyncStatus.text = "Estado: Subiendo..."
+                        txtSyncStatus.text = "Estado: Subiendo $sitio..."
                         progressBarHorizontal.isIndeterminate = false
                         progressBarHorizontal.progress = progress
                         txtSyncDetail.text = "$progress% - Imagen $current de $total"

@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#F5F7FA">
+
+    <!-- CABECERA -->
+    <View
+        android:id="@+id/headerHistorial"
+        android:layout_width="match_parent"
+        android:layout_height="100dp"
+        android:background="#1E2A44"
+        app:layout_constraintTop_toTopOf="parent"/>
+
+    <ImageButton
+        android:id="@+id/btnVolverHistorial"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_marginStart="12dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:src="@android:drawable/ic_menu_revert"
+        app:tint="#FFFFFF"
+        app:layout_constraintTop_toTopOf="@id/txtTituloHistorial"
+        app:layout_constraintBottom_toBottomOf="@id/txtTituloHistorial"
+        app:layout_constraintStart_toStartOf="parent"/>
+
+    <TextView
+        android:id="@+id/txtTituloHistorial"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Historial de Envíos"
+        android:textColor="#FFFFFF"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:layout_marginTop="32dp"
+        android:layout_marginStart="8dp"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintStart_toEndOf="@id/btnVolverHistorial"/>
+
+    <!-- BOTÓN BORRAR TODO -->
+    <ImageButton
+        android:id="@+id/btnBorrarHistorial"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_marginEnd="16dp"
+        android:background="?attr/selectableItemBackgroundBorderless"
+        android:src="@android:drawable/ic_menu_delete"
+        app:tint="#FFFFFF"
+        app:layout_constraintTop_toTopOf="@id/txtTituloHistorial"
+        app:layout_constraintBottom_toBottomOf="@id/txtTituloHistorial"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+    <!-- LISTA DE HISTORIAL -->
+    <androidx.recyclerview.widget.RecyclerView
+        android:id="@+id/rvHistorial"
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:padding="8dp"
+        android:clipToPadding="false"
+        app:layout_constraintTop_toBottomOf="@id/headerHistorial"
+        app:layout_constraintBottom_toBottomOf="parent"
+        tools:listitem="@android:layout/simple_list_item_2" />
+
+    <!-- ESTADO VACÍO -->
+    <TextView
+        android:id="@+id/txtVacio"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="No hay envíos registrados"
+        android:textColor="#757575"
+        android:visibility="gone"
+        app:layout_constraintTop_toTopOf="parent"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"/>
+
+</androidx.constraintlayout.widget.ConstraintLayout>
