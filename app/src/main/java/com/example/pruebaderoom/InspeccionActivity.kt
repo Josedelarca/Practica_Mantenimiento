@@ -265,7 +265,7 @@ class InspeccionActivity : AppCompatActivity() {
                         }
                         else -> {
                             holder.txtDesc.setTextColor(Color.parseColor("#333333"))
-                            holder.btnCamara.text = "TOMAR FOTO"
+                            holder.btnCamara.text = "TOMAR EVIDENCIA"
                             holder.btnCamara.setTextColor(Color.parseColor("#1E2A44"))
                         }
                     }

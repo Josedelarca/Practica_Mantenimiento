@@ -1,8 +1,33 @@
 <resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
     <style name="Base.Theme.Pruebaderoom" parent="Theme.Material3.DayNight.NoActionBar">
-        <!-- Customize your light theme here. -->
-        <!-- <item name="colorPrimary">@color/my_light_primary</item> -->
+        <!-- Colores Principales -->
+        <item name="colorPrimary">@color/brand_blue</item>
+        <item name="colorOnPrimary">@color/brand_white</item>
+
+        <!-- Colores de Contenedores (Esto quita el morado de fondos de botones y buscadores) -->
+        <item name="colorPrimaryContainer">@color/brand_divider</item>
+        <item name="colorOnPrimaryContainer">@color/brand_blue</item>
+
+        <!-- Colores Secundarios (Usados en Menu Lateral y otros componentes) -->
+        <item name="colorSecondary">@color/brand_blue</item>
+        <item name="colorOnSecondary">@color/brand_white</item>
+        <item name="colorSecondaryContainer">@color/brand_divider</item>
+        <item name="colorOnSecondaryContainer">@color/brand_blue</item>
+
+        <!-- Colores Terciarios (Para evitar cualquier morado residual) -->
+        <item name="colorTertiary">@color/brand_blue</item>
+        <item name="colorTertiaryContainer">@color/brand_divider</item>
+        <item name="colorOnTertiaryContainer">@color/brand_blue</item>
+
+        <!-- Colores de Superficie y Fondo -->
+        <item name="android:windowBackground">@color/brand_gray_bg</item>
+        <item name="colorSurface">@color/brand_white</item>
+        <item name="colorOnSurface">@color/brand_dark_gray</item>
+        <item name="colorSurfaceVariant">@color/brand_divider</item>
+        <item name="colorOnSurfaceVariant">@color/brand_dark_gray</item>
+
+        <item name="android:statusBarColor">@color/brand_blue</item>
     </style>
 
     <style name="Theme.Pruebaderoom" parent="Base.Theme.Pruebaderoom" />

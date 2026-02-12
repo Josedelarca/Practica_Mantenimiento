@@ -38,7 +38,7 @@
             android:layout_height="wrap_content"
             android:layout_gravity="end"
             android:layout_marginTop="8dp"
-            android:text="TOMAR FOTO" />
+            android:text="TOMAR EVIDENCIA" />
 
     </LinearLayout>
 </com.google.android.material.card.MaterialCardView>
