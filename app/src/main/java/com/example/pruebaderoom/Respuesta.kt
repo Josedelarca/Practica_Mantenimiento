@@ -422,7 +422,7 @@ class Respuesta : AppCompatActivity() {
                     val nombreArchivo = "IMG_${idRespuestaActual}_${timeStamp}.jpg"
                     val file = File(filesDir, nombreArchivo)
                     
-                    FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+                    FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 80, it) }
 
                     db.imagenDao().insert(Imagen(System.currentTimeMillis(), idRespuestaActual, file.absolutePath, "HD", Date()))
                     file.absolutePath

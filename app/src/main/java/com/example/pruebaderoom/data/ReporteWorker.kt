@@ -1,6 +1,10 @@
 package com.example.pruebaderoom.data
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Matrix
+import android.media.ExifInterface
 import android.util.Log
 import androidx.work.CoroutineWorker
 import androidx.work.WorkerParameters
@@ -13,6 +17,7 @@ import okhttp3.MediaType
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
 import java.io.File
+import java.io.FileOutputStream
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -82,9 +87,19 @@ class ReporteWorker(
                     continue
                 }
 
-                val file = File(img.rutaArchivo)
-                if (file.exists()) {
-                    val exitoFoto = enviarImagenIndividual(tareaIdServidor, serverRespuestaId, img, file, fotosContadas, totalFotos, nombreSitio)
+                val fileOriginal = File(img.rutaArchivo)
+                if (fileOriginal.exists()) {
+                    // OPTIMIZACIÓN ANTES DE ENVIAR
+                    val fileOptimizado = ImageOptimizer.optimize(applicationContext, fileOriginal)
+                    val fileParaEnviar = fileOptimizado ?: fileOriginal
+
+                    val exitoFoto = enviarImagenIndividual(tareaIdServidor, serverRespuestaId, img, fileParaEnviar, fotosContadas, totalFotos, nombreSitio)
+                    
+                    // Borrar el temporal optimizado si se creó
+                    if (fileOptimizado != null && fileOptimizado.exists()) {
+                        fileOptimizado.delete()
+                    }
+
                     if (exitoFoto) {
                         db.imagenDao().updateSyncStatus(img.idImagen, true)
                         fotosContadas++
@@ -98,7 +113,6 @@ class ReporteWorker(
             }
 
             if (todasOk) {
-                // GUARDAR EN HISTORIAL ANTES DE LIMPIAR
                 db.historialEnvioDao().insert(HistorialEnvio(
                     sitioNombre = nombreSitio,
                     formularioNombre = form?.nombre ?: "Inspección",
@@ -148,5 +162,94 @@ class ReporteWorker(
         }
         db.respuestaDao().deleteByTarea(idTarea)
         db.tareaDao().getById(idTarea)?.let { db.tareaDao().delete(it) }
+    }
+
+    object ImageOptimizer {
+        fun optimize(context: Context, originalFile: File): File? {
+            return try {
+                val maxSide = 1600
+                
+                // 1. Obtener dimensiones sin cargar en memoria
+                val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                BitmapFactory.decodeFile(originalFile.absolutePath, options)
+                
+                val originalWidth = options.outWidth
+                val originalHeight = options.outHeight
+                
+                if (originalWidth <= 0 || originalHeight <= 0) return null
+
+                // 2. Calcular inSampleSize para decodificación eficiente
+                options.inSampleSize = calculateInSampleSize(originalWidth, originalHeight, maxSide)
+                options.inJustDecodeBounds = false
+                
+                // 3. Decodificar imagen (ya reducida por inSampleSize)
+                var bitmap = BitmapFactory.decodeFile(originalFile.absolutePath, options) ?: return null
+                
+                // 4. Redimensionar exactamente si supera los 1600px
+                if (bitmap.width > maxSide || bitmap.height > maxSide) {
+                    bitmap = scaleBitmap(bitmap, maxSide)
+                }
+                
+                // 5. Corregir rotación EXIF
+                bitmap = rotateIfRequired(bitmap, originalFile.absolutePath)
+                
+                // 6. Guardar en archivo temporal JPEG con calidad 80%
+                val tempFile = File(context.cacheDir, "OPT_${UUID.randomUUID()}.jpg")
+                FileOutputStream(tempFile).use { out ->
+                    bitmap.compress(Bitmap.CompressFormat.JPEG, 80, out)
+                }
+                
+                bitmap.recycle()
+                tempFile
+            } catch (e: Exception) {
+                Log.e("ImageOptimizer", "Error optimizando imagen: ${e.message}")
+                null
+            }
+        }
+
+        private fun calculateInSampleSize(width: Int, height: Int, maxSide: Int): Int {
+            var inSampleSize = 1
+            if (width > maxSide || height > maxSide) {
+                val halfWidth = width / 2
+                val halfHeight = height / 2
+                while (halfWidth / inSampleSize >= maxSide && halfHeight / inSampleSize >= maxSide) {
+                    inSampleSize *= 2
+                }
+            }
+            return inSampleSize
+        }
+
+        private fun scaleBitmap(bitmap: Bitmap, maxSide: Int): Bitmap {
+            val width = bitmap.width
+            val height = bitmap.height
+            val scale = maxSide.toFloat() / Math.max(width, height)
+            
+            val matrix = Matrix()
+            matrix.postScale(scale, scale)
+            
+            val scaledBitmap = Bitmap.createBitmap(bitmap, 0, 0, width, height, matrix, true)
+            if (scaledBitmap != bitmap) bitmap.recycle()
+            return scaledBitmap
+        }
+
+        private fun rotateIfRequired(bitmap: Bitmap, path: String): Bitmap {
+            val exif = ExifInterface(path)
+            val orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL)
+            
+            val angle = when (orientation) {
+                ExifInterface.ORIENTATION_ROTATE_90 -> 90f
+                ExifInterface.ORIENTATION_ROTATE_180 -> 180f
+                ExifInterface.ORIENTATION_ROTATE_270 -> 270f
+                else -> 0f
+            }
+            
+            if (angle == 0f) return bitmap
+            
+            val matrix = Matrix()
+            matrix.postRotate(angle)
+            val rotatedBitmap = Bitmap.createBitmap(bitmap, 0, 0, bitmap.width, bitmap.height, matrix, true)
+            bitmap.recycle()
+            return rotatedBitmap
+        }
     }
 }
