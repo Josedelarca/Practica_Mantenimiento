@@ -69,6 +69,27 @@ class Respuesta : AppCompatActivity() {
         }
     }
 
+    private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+        uri?.let {
+            try {
+                val inputStream = contentResolver.openInputStream(it)
+                val bitmap = BitmapFactory.decodeStream(inputStream)
+                inputStream?.close()
+                
+                bitmap?.let { b ->
+                    if (listaFotos.size < maxFotosPermitidas) {
+                        val bitmapConMarca = agregarMarcaDeAgua(b)
+                        guardarFotoAlInstante(bitmapConMarca)
+                    } else {
+                        Toast.makeText(this, "Límite de fotos alcanzado", Toast.LENGTH_SHORT).show()
+                    }
+                }
+            } catch (e: Exception) {
+                Toast.makeText(this, "Error al cargar imagen de la galería", Toast.LENGTH_SHORT).show()
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
         super.onCreate(savedInstanceState)
@@ -102,8 +123,16 @@ class Respuesta : AppCompatActivity() {
             }
         }
 
+        findViewById<Button>(R.id.btnGaleria).setOnClickListener {
+            if (listaFotos.size >= maxFotosPermitidas) {
+                Toast.makeText(this, "Límite alcanzado", Toast.LENGTH_SHORT).show()
+            } else {
+                pickImageLauncher.launch("image/*")
+            }
+        }
+
         findViewById<Button>(R.id.btnEnviar).setOnClickListener {
-            validarYGuardar()
+            validaYGuardar()
         }
 
         findViewById<Button>(R.id.btnVolver).setOnClickListener { finish() }
@@ -175,9 +204,9 @@ class Respuesta : AppCompatActivity() {
     private fun actualizarTextoContador() {
         txtRequisitos.text = "Evidencia: ${listaFotos.size} fotos tomadas / Mínimo: $minFotosRequeridas"
         if (listaFotos.size >= minFotosRequeridas) {
-            txtRequisitos.setTextColor(Color.parseColor("#43A047")) // Verde si cumple
+            txtRequisitos.setTextColor(Color.parseColor("#43A047")) 
         } else {
-            txtRequisitos.setTextColor(Color.parseColor("#1E2A44")) // Azul/Gris si no
+            txtRequisitos.setTextColor(Color.parseColor("#1E2A44")) 
         }
     }
 
@@ -236,7 +265,7 @@ class Respuesta : AppCompatActivity() {
         }
     }
 
-    private fun validarYGuardar() {
+    private fun validaYGuardar() {
         if (listaFotos.size < minFotosRequeridas) {
             Toast.makeText(this, "Faltan fotos ($minFotosRequeridas mín)", Toast.LENGTH_SHORT).show()
             return
@@ -309,7 +338,6 @@ class Respuesta : AppCompatActivity() {
             listaFotos.removeAt(posicion)
             adapter.notifyItemRemoved(posicion)
             
-            // SI SE ELIMINAN TODAS LAS FOTOS, EL ESTADO VUELVE A "EN PROCESO"
             if (listaFotos.isEmpty()) {
                 withContext(Dispatchers.IO) {
                     val r = db.respuestaDao().getById(idRespuestaActual)

@@ -255,9 +255,6 @@ class MainActivity : AppCompatActivity() {
                 VISITAS: ${sitio.visit}
                 MORFOLOGÍA: ${sitio.siteMorfology}
                 NUEVA MORFOLOGÍA: ${sitio.newMorfology}
-                LATITUD: ${sitio.latitud}
-                LONGITUD: ${sitio.longitud}
-                ESTADO: $status
             """.trimIndent()
         }
     }

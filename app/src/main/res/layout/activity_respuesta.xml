@@ -86,23 +86,44 @@
         </LinearLayout>
     </com.google.android.material.card.MaterialCardView>
 
-    <!-- BOTÓN CÁMARA -->
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/btnSubir"
-        style="@style/Widget.MaterialComponents.Button.OutlinedButton"
-        android:layout_width="0dp"
-        android:layout_height="70dp"
-        android:layout_margin="16dp"
-        android:text="TOMAR FOTOGRAFÍA"
-        android:textColor="#1E2A44"
-        app:cornerRadius="12dp"
-        app:strokeColor="#1E2A44"
-        app:icon="@android:drawable/ic_menu_camera"
-        app:layout_constraintTop_toBottomOf="@id/cardPregunta"
-        app:layout_constraintStart_toStartOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"/>
+    <!-- BOTONES MULTIMEDIA -->
+    <LinearLayout
+        android:id="@+id/layoutBotonesMedia"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:paddingHorizontal="16dp"
+        android:layout_marginTop="16dp"
+        app:layout_constraintTop_toBottomOf="@id/cardPregunta">
 
-    <!-- LISTA FOTOS (ALTURA CORREGIDA PARA QUE SE VEAN) -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnSubir"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="70dp"
+            android:layout_weight="1"
+            android:layout_marginEnd="8dp"
+            android:text="CÁMARA"
+            android:textColor="#1E2A44"
+            app:cornerRadius="12dp"
+            app:strokeColor="#1E2A44"
+            app:icon="@android:drawable/ic_menu_camera" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/btnGaleria"
+            style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="70dp"
+            android:layout_weight="1"
+            android:layout_marginStart="8dp"
+            android:text="GALERÍA"
+            android:textColor="#1E2A44"
+            app:cornerRadius="12dp"
+            app:strokeColor="#1E2A44"
+            app:icon="@android:drawable/ic_menu_gallery" />
+    </LinearLayout>
+
+    <!-- LISTA FOTOS -->
     <androidx.recyclerview.widget.RecyclerView
         android:id="@+id/rvFotos"
         android:layout_width="match_parent"
@@ -112,7 +133,7 @@
         android:clipToPadding="false"
         android:orientation="horizontal"
         app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
-        app:layout_constraintTop_toBottomOf="@id/btnSubir"
+        app:layout_constraintTop_toBottomOf="@id/layoutBotonesMedia"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         tools:listitem="@layout/item_foto" />
