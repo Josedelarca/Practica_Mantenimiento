@@ -45,6 +45,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var cardSyncStatus: View
     private lateinit var drawerLayout: DrawerLayout
     private lateinit var navView: NavigationView
+    private lateinit var btnSyncMain: ImageButton
     
     private lateinit var txtSyncStatus: TextView
     private lateinit var txtSyncDetail: TextView
@@ -52,6 +53,7 @@ class MainActivity : AppCompatActivity() {
     
     private var listaSitios: List<Sitio> = emptyList()
     private var sitioSeleccionado: Sitio? = null
+    private var isUploadingNow: Boolean = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
@@ -70,7 +72,7 @@ class MainActivity : AppCompatActivity() {
         drawerLayout = findViewById(R.id.drawerLayout)
         navView = findViewById(R.id.navigationView)
         val btnMenuToggle = findViewById<ImageButton>(R.id.btnMenuToggle)
-        val btnSyncMain = findViewById<ImageButton>(R.id.btnSyncMain)
+        btnSyncMain = findViewById(R.id.btnSyncMain)
         
         txtInfo = findViewById(R.id.txtInfo)
         autoCompleteSitios = findViewById(R.id.autoCompleteCiudades)
@@ -107,6 +109,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         btnSyncMain.setOnClickListener {
+            if (isUploadingNow) {
+                Toast.makeText(this, "Espera a que termine el envío para actualizar", Toast.LENGTH_LONG).show()
+                return@setOnClickListener
+            }
             if (isNetworkAvailable()) {
                 Toast.makeText(this, "Actualizando Información...", Toast.LENGTH_SHORT).show()
                 sincronizarTodo(showToast = true)
@@ -263,6 +269,8 @@ class MainActivity : AppCompatActivity() {
         WorkManager.getInstance(this).getWorkInfosByTagLiveData("ReporteWorker").observe(this) { infos ->
             if (infos.isNullOrEmpty()) {
                 cardSyncStatus.visibility = View.GONE
+                isUploadingNow = false
+                btnSyncMain.alpha = 1.0f
                 return@observe
             }
 
@@ -270,6 +278,8 @@ class MainActivity : AppCompatActivity() {
             val infoExitosa = infos.firstOrNull { it.state == WorkInfo.State.SUCCEEDED }
 
             if (infoActiva != null) {
+                isUploadingNow = true
+                btnSyncMain.alpha = 0.5f
                 cardSyncStatus.visibility = View.VISIBLE
                 val progress = infoActiva.progress.getInt("PROGRESS", 0)
                 val current = infoActiva.progress.getInt("CURRENT_IMG", 0)
@@ -295,6 +305,8 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             } else if (infoExitosa != null) {
+                isUploadingNow = false
+                btnSyncMain.alpha = 1.0f
                 txtSyncStatus.text = "Estado: ¡Subido correctamente!"
                 progressBarHorizontal.isIndeterminate = false
                 progressBarHorizontal.progress = 100
@@ -305,6 +317,8 @@ class MainActivity : AppCompatActivity() {
                     WorkManager.getInstance(this).pruneWork()
                 }, 3000)
             } else {
+                isUploadingNow = false
+                btnSyncMain.alpha = 1.0f
                 cardSyncStatus.visibility = View.GONE
             }
             
@@ -338,6 +352,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun sincronizarTodo(showToast: Boolean) {
+        if (isUploadingNow) return
+
         lifecycleScope.launch {
             try {
                 withContext(Dispatchers.IO) {
@@ -346,6 +362,8 @@ class MainActivity : AppCompatActivity() {
 
                     db.withTransaction {
                         if (resSitios.data.isNotEmpty()) {
+                            // En lugar de borrar todo, podrías usar un UPSERT si el DAO lo permite.
+                            // Por ahora, mantenemos la lógica pero protegida por isUploadingNow
                             db.sitioDao().deleteAll()
                             db.sitioDao().insertAll(resSitios.data)
                         }

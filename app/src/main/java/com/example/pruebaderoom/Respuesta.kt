@@ -10,6 +10,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.*
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
@@ -69,23 +70,40 @@ class Respuesta : AppCompatActivity() {
         }
     }
 
-    private val pickImageLauncher = registerForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-        uri?.let {
-            try {
-                val inputStream = contentResolver.openInputStream(it)
-                val bitmap = BitmapFactory.decodeStream(inputStream)
-                inputStream?.close()
+    // Usamos un límite alto por defecto en el contrato y validamos dinámicamente en el callback
+    private val pickMultipleMedia = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(100)) { uris ->
+        if (uris.isNotEmpty()) {
+            lifecycleScope.launch {
+                val cupoDisponible = maxOf(0, maxFotosPermitidas - listaFotos.size)
                 
-                bitmap?.let { b ->
-                    if (listaFotos.size < maxFotosPermitidas) {
-                        val bitmapConMarca = agregarMarcaDeAgua(b)
-                        guardarFotoAlInstante(bitmapConMarca)
-                    } else {
-                        Toast.makeText(this, "Límite de fotos alcanzado", Toast.LENGTH_SHORT).show()
+                if (cupoDisponible == 0) {
+                    Toast.makeText(this@Respuesta, "Límite de fotos alcanzado", Toast.LENGTH_SHORT).show()
+                    return@launch
+                }
+
+                val urisAProcesar = if (uris.size > cupoDisponible) {
+                    Toast.makeText(this@Respuesta, "Solo se agregarán $cupoDisponible fotos (máximo permitido: $maxFotosPermitidas)", Toast.LENGTH_LONG).show()
+                    uris.take(cupoDisponible)
+                } else {
+                    uris
+                }
+
+                urisAProcesar.forEach { uri ->
+                    try {
+                        val bitmap = withContext(Dispatchers.IO) {
+                            contentResolver.openInputStream(uri)?.use { inputStream ->
+                                BitmapFactory.decodeStream(inputStream)
+                            }
+                        }
+                        
+                        bitmap?.let { b ->
+                            val bitmapConMarca = agregarMarcaDeAgua(b)
+                            guardarFotoAlInstante(bitmapConMarca)
+                        }
+                    } catch (e: Exception) {
+                        Toast.makeText(this@Respuesta, "Error al cargar imagen", Toast.LENGTH_SHORT).show()
                     }
                 }
-            } catch (e: Exception) {
-                Toast.makeText(this, "Error al cargar imagen de la galería", Toast.LENGTH_SHORT).show()
             }
         }
     }
@@ -127,7 +145,7 @@ class Respuesta : AppCompatActivity() {
             if (listaFotos.size >= maxFotosPermitidas) {
                 Toast.makeText(this, "Límite alcanzado", Toast.LENGTH_SHORT).show()
             } else {
-                pickImageLauncher.launch("image/*")
+                pickMultipleMedia.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
             }
         }
 
@@ -202,7 +220,7 @@ class Respuesta : AppCompatActivity() {
     }
 
     private fun actualizarTextoContador() {
-        txtRequisitos.text = "Evidencia: ${listaFotos.size} fotos tomadas / Mínimo: $minFotosRequeridas"
+        txtRequisitos.text = "Evidencia: ${listaFotos.size} fotos / Máximo: $maxFotosPermitidas"
         if (listaFotos.size >= minFotosRequeridas) {
             txtRequisitos.setTextColor(Color.parseColor("#43A047")) 
         } else {
