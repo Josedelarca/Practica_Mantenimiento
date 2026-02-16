@@ -31,6 +31,20 @@
                 android:resource="@xml/file_paths" />
         </provider>
 
+        <!-- PANTALLA DE LOGIN (AHORA ES LA PRINCIPAL) -->
+        <activity
+            android:name=".LoginActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".MainActivity"
+            android:exported="false" />
+
         <!-- REGISTRO DE ACTIVIDADES -->
         <activity
             android:name=".EstadoProyectoActivity"
@@ -47,14 +61,6 @@
         <activity
             android:name=".Respuesta"
             android:exported="false" />
-        <activity
-            android:name=".MainActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
 
         <!-- SERVICIO DE WORKMANAGER PARA NOTIFICACIONES EN PRIMER PLANO -->
         <service
