@@ -24,6 +24,7 @@ import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.example.pruebaderoom.data.AppDatabase
 import com.example.pruebaderoom.data.RetrofitClient
+import com.example.pruebaderoom.data.SessionManager
 import com.example.pruebaderoom.data.entity.*
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.navigation.NavigationView
@@ -37,6 +38,7 @@ import java.util.*
 class MainActivity : AppCompatActivity() {
 
     private lateinit var db: AppDatabase
+    private lateinit var sessionManager: SessionManager
     private lateinit var txtInfo: TextView
     private lateinit var autoCompleteSitios: AutoCompleteTextView
     private lateinit var btnVerMapa: Button
@@ -58,6 +60,10 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
         super.onCreate(savedInstanceState)
+        
+        sessionManager = SessionManager(this)
+        RetrofitClient.init(this)
+
         enableEdgeToEdge()
         setContentView(R.layout.activity_main)
         
@@ -96,6 +102,7 @@ class MainActivity : AppCompatActivity() {
                 R.id.nav_inicio -> drawerLayout.closeDrawers()
                 R.id.nav_historial -> startActivity(Intent(this, HistorialActivity::class.java))
                 R.id.nav_estado -> startActivity(Intent(this, EstadoProyectoActivity::class.java))
+                R.id.nav_logout -> confirmarCerrarSesion()
             }
             drawerLayout.closeDrawers()
             true
@@ -146,6 +153,21 @@ class MainActivity : AppCompatActivity() {
                 startActivity(intent)
             } ?: Toast.makeText(this, "Selecciona un sitio primero", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun confirmarCerrarSesion() {
+        AlertDialog.Builder(this)
+            .setTitle("Cerrar Sesión")
+            .setMessage("¿Estás seguro que deseas cerrar sesión?")
+            .setPositiveButton("SÍ") { _, _ ->
+                sessionManager.clearSession()
+                val intent = Intent(this, LoginActivity::class.java)
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+                startActivity(intent)
+                finish()
+            }
+            .setNegativeButton("NO", null)
+            .show()
     }
 
     override fun onResume() {
@@ -327,7 +349,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun irAInspeccion(idTarea: Long) {
-        startActivity(Intent(this, InspeccionActivity::class.java).putExtra("ID_TAREA", idTarea))
+        val intent = Intent(this, InspeccionActivity::class.java).apply {
+            putExtra("ID_TAREA", idTarea)
+        }
+        startActivity(intent)
     }
 
     private fun isWifiAvailable(): Boolean {
@@ -381,7 +406,7 @@ class MainActivity : AppCompatActivity() {
                                     db.formularioDao().insert(Formulario(apiForm.id, apiForm.nombre, apiForm.descripcion))
                                     
                                     apiForm.secciones.forEach { apiSec: com.example.pruebaderoom.data.SeccionApiData ->
-                                        db.seccionDao().insert(Seccion(apiSec.id, apiForm.id, apiSec.nombre))
+                                        db.seccionDao().insert(Seccion(apiSec.id, apiForm.id, apiSec.nombre, apiSec.zona))
                                         
                                         apiSec.preguntas.forEach { apiPreg: com.example.pruebaderoom.data.PreguntaApiData ->
                                             db.preguntaDao().insert(Pregunta(

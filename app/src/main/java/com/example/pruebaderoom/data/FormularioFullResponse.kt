@@ -19,6 +19,7 @@ data class SeccionApiData(
     @SerializedName("formulario_id") val formularioId: Long,
     @SerializedName("nombre") val nombre: String,
     @SerializedName("orden") val orden: Int,
+    @SerializedName("zona") val zona: String, // 'suelo', 'altura' o 'ambos'
     @SerializedName("preguntas") val preguntas: List<PreguntaApiData>
 )
 

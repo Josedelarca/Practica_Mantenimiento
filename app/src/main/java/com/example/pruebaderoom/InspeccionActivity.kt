@@ -3,7 +3,6 @@ package com.example.pruebaderoom
 import android.content.Intent
 import android.graphics.Color
 import android.os.Bundle
-import android.util.Log
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -17,15 +16,10 @@ import androidx.appcompat.app.AppCompatDelegate
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
-import androidx.room.withTransaction
 import androidx.work.*
 import com.example.pruebaderoom.data.AppDatabase
 import com.example.pruebaderoom.data.ReporteWorker
-import com.example.pruebaderoom.data.RetrofitClient
 import com.example.pruebaderoom.data.entity.*
-import com.example.pruebaderoom.data.SeccionApiData
-import com.example.pruebaderoom.data.PreguntaApiData
-import com.example.pruebaderoom.data.CampoApiData
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -37,6 +31,7 @@ class InspeccionActivity : AppCompatActivity() {
     private lateinit var txtTituloFormulario: TextView
     private lateinit var btnEnviar: Button
     private var idTareaRecibido: Long = -1
+    private var zonaElegida: String = "ambos"
     
     private lateinit var inspeccionAdapter: InspeccionAdapter
 
@@ -52,6 +47,8 @@ class InspeccionActivity : AppCompatActivity() {
         setContentView(R.layout.activity_inspeccion)
 
         idTareaRecibido = intent.getLongExtra("ID_TAREA", -1L)
+        zonaElegida = intent.getStringExtra("ZONA_ELEGIDA") ?: "ambos"
+        
         db = AppDatabase.getDatabase(this)
         
         txtTituloFormulario = findViewById(R.id.txtTituloFormulario)
@@ -72,8 +69,6 @@ class InspeccionActivity : AppCompatActivity() {
         
         actualizarEstadoBotonEnvio()
         observarProgresoEnvio()
-        
-        // Iniciamos la carga de datos
         cargarYMostrar()
     }
 
@@ -149,16 +144,21 @@ class InspeccionActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val estaCompleto = withContext(Dispatchers.IO) {
                 val tarea = db.tareaDao().getById(idTareaRecibido) ?: return@withContext false
-                val preguntas = db.preguntaDao().getByFormulario(tarea.idFormulario)
-                if (preguntas.isEmpty()) return@withContext false
+                val secciones = db.seccionDao().getByFormulario(tarea.idFormulario)
+                    .filter { it.zona == zonaElegida || it.zona == "ambos" }
                 
-                preguntas.all { pregunta ->
-                    val respuesta = db.respuestaDao().getAll().find { 
-                        it.idPregunta == pregunta.idPregunta && it.idTarea == idTareaRecibido 
+                if (secciones.isEmpty()) return@withContext false
+
+                secciones.all { seccion ->
+                    val preguntas = db.preguntaDao().getBySeccion(seccion.idSeccion)
+                    preguntas.all { pregunta ->
+                        val respuesta = db.respuestaDao().getAll().find { 
+                            it.idPregunta == pregunta.idPregunta && it.idTarea == idTareaRecibido 
+                        }
+                        if (respuesta == null) return@all false
+                        val cantImagenes = db.imagenDao().getByRespuesta(respuesta.idRespuesta).size
+                        cantImagenes >= pregunta.minImagenes
                     }
-                    if (respuesta == null) return@all false
-                    val cantImagenes = db.imagenDao().getByRespuesta(respuesta.idRespuesta).size
-                    cantImagenes >= pregunta.minImagenes
                 }
             }
 
@@ -180,13 +180,10 @@ class InspeccionActivity : AppCompatActivity() {
         lifecycleScope.launch {
             val hibrido = withContext(Dispatchers.IO) {
                 val list = mutableListOf<InspeccionItem>()
-                
-                // 1. Obtener la tarea para saber qué formulario usar
-                val tarea = db.tareaDao().getById(idTareaRecibido)
-                if (tarea == null) return@withContext list
+                val tarea = db.tareaDao().getById(idTareaRecibido) ?: return@withContext list
 
-                // 2. Filtrar secciones solo por este formulario
                 val secciones = db.seccionDao().getByFormulario(tarea.idFormulario)
+                    .filter { it.zona == zonaElegida || it.zona == "ambos" }
                 
                 secciones.forEach { s ->
                     list.add(InspeccionItem.SeccionHeader(s))
@@ -198,12 +195,11 @@ class InspeccionActivity : AppCompatActivity() {
             
             inspeccionAdapter.updateData(hibrido)
 
-            // Actualizar título con el nombre del formulario
             withContext(Dispatchers.IO) {
                 val tarea = db.tareaDao().getById(idTareaRecibido)
                 val formInfo = tarea?.let { db.formularioDao().getById(it.idFormulario) }
                 withContext(Dispatchers.Main) {
-                    txtTituloFormulario.text = formInfo?.nombre ?: "Inspección"
+                    txtTituloFormulario.text = "${formInfo?.nombre ?: "Inspección"} ($zonaElegida)"
                 }
             }
         }

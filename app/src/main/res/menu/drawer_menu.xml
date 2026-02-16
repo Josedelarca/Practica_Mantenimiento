@@ -14,4 +14,13 @@
             android:icon="@drawable/ic_launcher_foreground"
             android:title="Estado del Proyecto" />
     </group>
+
+    <item android:title="Opciones">
+        <menu>
+            <item
+                android:id="@+id/nav_logout"
+                android:icon="@android:drawable/ic_lock_power_off"
+                android:title="Cerrar Sesión" />
+        </menu>
+    </item>
 </menu>

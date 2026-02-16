@@ -22,7 +22,7 @@ import com.example.pruebaderoom.data.entity.*
         ValorRespuesta::class,
         HistorialEnvio::class
     ],
-    version = 10, 
+    version = 11,
     exportSchema = false
 )
 @TypeConverters(Converters::class)

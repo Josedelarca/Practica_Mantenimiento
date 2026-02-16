@@ -9,6 +9,9 @@ import retrofit2.http.*
 
 interface SitioService {
     
+    @POST("api/login")
+    suspend fun login(@Body credentials: LoginRequest): Response<LoginResponse>
+
     @GET("api/sitios")
     suspend fun getSitios(): SitioResponse
 
@@ -37,6 +40,22 @@ interface SitioService {
         @Part imagenes: List<MultipartBody.Part>
     ): Response<Unit>
 }
+
+// --- LOGIN DATA CLASSES ---
+data class LoginRequest(
+    val email: String,
+    val password: String
+)
+
+data class LoginResponse(
+    val success: Boolean,
+    val data: LoginData
+)
+
+data class LoginData(
+    val token: String,
+    val user: Any? // Puedes definir una clase User si necesitas mas datos
+)
 
 // --- DATA CLASSES PARA MÚLTIPLES FORMULARIOS ---
 

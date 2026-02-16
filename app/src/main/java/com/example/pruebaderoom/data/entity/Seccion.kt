@@ -4,10 +4,6 @@ import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.PrimaryKey
 
-/**
- * Entidad Seccion: Hemos eliminado la restricción estricta de ForeignKey para permitir 
- * que la estructura del formulario se borre y actualice sin errores.
- */
 @Entity(tableName = "Seccion")
 data class Seccion(
     @PrimaryKey
@@ -18,5 +14,8 @@ data class Seccion(
     val idFormulario: Long,
     
     @ColumnInfo(name = "nombre")
-    val nombre: String
+    val nombre: String,
+
+    @ColumnInfo(name = "zona")
+    val zona: String = "ambos" // 'suelo', 'altura' o 'ambos'
 )

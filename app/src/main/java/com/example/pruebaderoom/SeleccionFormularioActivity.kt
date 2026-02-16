@@ -10,6 +10,7 @@ import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -52,7 +53,6 @@ class SeleccionFormularioActivity : AppCompatActivity() {
 
     private fun cargarListaFormularios() {
         lifecycleScope.launch {
-            // 1. Mostrar lo que ya tenemos (Instantáneo)
             val listaLocal = withContext(Dispatchers.IO) {
                 db.formularioDao().getAll().map { FormularioApiShort(it.idFormulario, it.nombre, it.descripcion) }
             }
@@ -60,7 +60,6 @@ class SeleccionFormularioActivity : AppCompatActivity() {
                 mostrarLista(listaLocal)
             }
 
-            // 2. Actualizar desde API en silencio (segundo plano)
             try {
                 val response = withContext(Dispatchers.IO) { RetrofitClient.instance.getListaFormularios() }
                 val listaApi = response.data
@@ -85,65 +84,80 @@ class SeleccionFormularioActivity : AppCompatActivity() {
 
     private fun verificarYEntrar(idFormulario: Long) {
         lifecycleScope.launch {
-            // Verificamos si ya tenemos la estructura localmente
             val tieneEstructura = withContext(Dispatchers.IO) {
                 db.seccionDao().getByFormulario(idFormulario).isNotEmpty()
             }
 
             if (tieneEstructura) {
-                // ENTRADA INSTANTÁNEA (Sin "cargando")
-                manejarTareaYEntrar(idFormulario)
+                mostrarDialogoZona(idFormulario)
             } else {
-                // Descarga solo si es la primera vez
                 descargarEstructuraYEntrar(idFormulario)
             }
         }
     }
 
-    private suspend fun descargarEstructuraYEntrar(idFormulario: Long) {
-        try {
-            val res = withContext(Dispatchers.IO) { RetrofitClient.instance.getFormularioCompleto(idFormulario) }
-            if (res.success) {
-                val data = res.data
-                withContext(Dispatchers.IO) {
-                    db.seccionDao().deleteByFormulario(data.id)
-                    db.formularioDao().insert(Formulario(data.id, data.nombre, data.descripcion))
-                    
-                    data.secciones.forEach { s: SeccionApiData ->
-                        db.seccionDao().insert(Seccion(s.id, data.id, s.nombre))
-                        s.preguntas.forEach { p: PreguntaApiData ->
-                            db.preguntaDao().insert(Pregunta(p.id, s.id, p.descripcion, p.minImagenes, p.maxImagenes))
-                            val campos = p.campos.map { Campo(it.id, p.id, it.tipo, it.label, it.orden) }
-                            db.campoDao().insertAll(campos)
+    private fun mostrarDialogoZona(idFormulario: Long) {
+        val opciones = arrayOf("Suelo", "Torre")
+        AlertDialog.Builder(this)
+            .setTitle("¿Dónde trabajarás?")
+            .setItems(opciones) { _, which ->
+                val zonaElegida = if (which == 0) "suelo" else "altura"
+                manejarTareaYEntrar(idFormulario, zonaElegida)
+            }
+            .setCancelable(false)
+            .show()
+    }
+
+    private fun descargarEstructuraYEntrar(idFormulario: Long) {
+        lifecycleScope.launch {
+            try {
+                val res = withContext(Dispatchers.IO) { RetrofitClient.instance.getFormularioCompleto(idFormulario) }
+                if (res.success) {
+                    val data = res.data
+                    withContext(Dispatchers.IO) {
+                        db.seccionDao().deleteByFormulario(data.id)
+                        db.formularioDao().insert(Formulario(data.id, data.nombre, data.descripcion))
+                        
+                        data.secciones.forEach { s: SeccionApiData ->
+                            db.seccionDao().insert(Seccion(s.id, data.id, s.nombre, s.zona))
+                            s.preguntas.forEach { p: PreguntaApiData ->
+                                db.preguntaDao().insert(Pregunta(p.id, s.id, p.descripcion, p.minImagenes, p.maxImagenes))
+                                val campos = p.campos.map { Campo(it.id, p.id, it.tipo, it.label, it.orden) }
+                                db.campoDao().insertAll(campos)
+                            }
                         }
                     }
+                    mostrarDialogoZona(idFormulario)
                 }
-                manejarTareaYEntrar(idFormulario)
-            }
-        } catch (e: Exception) {
-            withContext(Dispatchers.Main) {
+            } catch (e: Exception) {
                 Toast.makeText(this@SeleccionFormularioActivity, "No se pudo descargar el formulario", Toast.LENGTH_SHORT).show()
             }
         }
     }
 
-    private suspend fun manejarTareaYEntrar(idFormulario: Long) {
-        val tareaExistente = withContext(Dispatchers.IO) {
-            db.tareaDao().getTareaActivaPorSitio(idSitioRecibido)
-        }
+    private fun manejarTareaYEntrar(idFormulario: Long, zonaElegida: String) {
+        lifecycleScope.launch {
+            val tareaExistente = withContext(Dispatchers.IO) {
+                db.tareaDao().getTareaActivaPorSitio(idSitioRecibido)
+            }
 
-        if (tareaExistente != null && tareaExistente.idFormulario == idFormulario) {
-            irAInspeccion(tareaExistente.idTarea)
-        } else {
-            val nuevaId = System.currentTimeMillis()
-            val nueva = Tarea(nuevaId, idSitioRecibido, idFormulario, TipoMantenimiento.PREVENTIVO, Date(), "En curso", EstadoTarea.EN_PROCESO)
-            withContext(Dispatchers.IO) { db.tareaDao().insert(nueva) }
-            irAInspeccion(nuevaId)
+            if (tareaExistente != null && tareaExistente.idFormulario == idFormulario) {
+                irAInspeccion(tareaExistente.idTarea, zonaElegida)
+            } else {
+                val nuevaId = System.currentTimeMillis()
+                val nueva = Tarea(nuevaId, idSitioRecibido, idFormulario, TipoMantenimiento.PREVENTIVO, Date(), "En curso", EstadoTarea.EN_PROCESO)
+                withContext(Dispatchers.IO) { db.tareaDao().insert(nueva) }
+                irAInspeccion(nuevaId, zonaElegida)
+            }
         }
     }
 
-    private fun irAInspeccion(idTarea: Long) {
-        startActivity(Intent(this, InspeccionActivity::class.java).putExtra("ID_TAREA", idTarea))
+    private fun irAInspeccion(idTarea: Long, zona: String) {
+        val intent = Intent(this, InspeccionActivity::class.java).apply {
+            putExtra("ID_TAREA", idTarea)
+            putExtra("ZONA_ELEGIDA", zona)
+        }
+        startActivity(intent)
     }
 
     class FormularioAdapter(
