@@ -6,13 +6,41 @@
     android:orientation="vertical"
     android:padding="12dp">
 
-    <TextView
-        android:id="@+id/txtSeccionNombre"
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="NOMBRE DE LA SECCIÓN"
-        android:textColor="#1E2A44"
-        android:textSize="14sp"
-        android:textStyle="bold"
-        android:textAllCaps="true" />
+        android:orientation="horizontal"
+        android:gravity="center_vertical">
+
+        <TextView
+            android:id="@+id/txtSeccionNombre"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="NOMBRE DE LA SECCIÓN"
+            android:textColor="#1E2A44"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:textAllCaps="true" />
+
+        <!-- Indicador de Envío para la Sección -->
+        <ProgressBar
+            android:id="@+id/pbSeccionSync"
+            style="?android:attr/progressBarStyleSmall"
+            android:layout_width="16dp"
+            android:layout_height="16dp"
+            android:visibility="gone"
+            android:indeterminateTint="#FF9800" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/txtSeccionStatus"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="2dp"
+        android:text="Subiendo datos..."
+        android:textColor="#FF9800"
+        android:textSize="10sp"
+        android:visibility="gone" />
+
 </LinearLayout>

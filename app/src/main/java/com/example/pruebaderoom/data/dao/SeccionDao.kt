@@ -24,6 +24,9 @@ interface SeccionDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insert(seccion: Seccion)
 
+    @Query("UPDATE Seccion SET is_completada = :completada WHERE id_seccion = :idSeccion")
+    suspend fun updateCompletada(idSeccion: Long, completada: Boolean)
+
     @Query("DELETE FROM Seccion WHERE id_formulario = :idFormulario AND id_seccion NOT IN (:idsApi)")
     suspend fun deleteOldSecciones(idFormulario: Long, idsApi: List<Long>)
 

@@ -8,7 +8,8 @@ import retrofit2.converter.gson.GsonConverterFactory
 import java.util.concurrent.TimeUnit
 
 object RetrofitClient {
-    private const val BASE_URL = "http://192.168.1.25:8000/"
+    ///private const val BASE_URL = "http://192.168.1.25:8000/"
+    private const val BASE_URL = "http://100.74.188.11:8000/"
     private var instanceService: SitioService? = null
     private var sessionManager: SessionManager? = null
 

@@ -2,13 +2,14 @@ package com.example.pruebaderoom
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Color
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
-import android.net.Uri
 import android.os.Bundle
 import android.util.Log
-import android.view.Gravity
+import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import android.widget.*
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AlertDialog
@@ -19,43 +20,35 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.drawerlayout.widget.DrawerLayout
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import androidx.room.withTransaction
 import androidx.work.WorkInfo
 import androidx.work.WorkManager
 import com.example.pruebaderoom.data.AppDatabase
 import com.example.pruebaderoom.data.RetrofitClient
 import com.example.pruebaderoom.data.SessionManager
+import com.example.pruebaderoom.data.TareaAsignadaApi
 import com.example.pruebaderoom.data.entity.*
-import com.google.android.material.button.MaterialButton
 import com.google.android.material.navigation.NavigationView
+import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import java.io.File
+import java.text.SimpleDateFormat
 import java.util.*
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var db: AppDatabase
     private lateinit var sessionManager: SessionManager
-    private lateinit var txtInfo: TextView
-    private lateinit var autoCompleteSitios: AutoCompleteTextView
-    private lateinit var btnVerMapa: Button
-    private lateinit var layoutPendientes: LinearLayout
-    private lateinit var containerPendientes: LinearLayout
-    private lateinit var cardSyncStatus: View
     private lateinit var drawerLayout: DrawerLayout
     private lateinit var navView: NavigationView
+    private lateinit var rvTareas: RecyclerView
+    private lateinit var pbLoading: ProgressBar
+    private lateinit var layoutNoTareas: View
     private lateinit var btnSyncMain: ImageButton
-    
-    private lateinit var txtSyncStatus: TextView
-    private lateinit var txtSyncDetail: TextView
-    private lateinit var progressBarHorizontal: ProgressBar
-    
-    private var listaSitios: List<Sitio> = emptyList()
-    private var sitioSeleccionado: Sitio? = null
-    private var isUploadingNow: Boolean = false
+    private var adapter: TareaAdapter? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_NO)
@@ -77,22 +70,18 @@ class MainActivity : AppCompatActivity() {
         
         drawerLayout = findViewById(R.id.drawerLayout)
         navView = findViewById(R.id.navigationView)
-        val btnMenuToggle = findViewById<ImageButton>(R.id.btnMenuToggle)
+        rvTareas = findViewById(R.id.rvTareasAsignadas)
+        pbLoading = findViewById(R.id.pbLoadingTasks)
+        layoutNoTareas = findViewById(R.id.txtNoTareas)
         btnSyncMain = findViewById(R.id.btnSyncMain)
         
-        txtInfo = findViewById(R.id.txtInfo)
-        autoCompleteSitios = findViewById(R.id.autoCompleteCiudades)
-        btnVerMapa = findViewById(R.id.btnVerMapa)
-        layoutPendientes = findViewById(R.id.layoutPendientes)
-        containerPendientes = findViewById(R.id.containerBotonesPendientes)
-        cardSyncStatus = findViewById(R.id.cardSyncStatus)
+        val headerView = navView.getHeaderView(0)
+        val txtHeaderName = headerView.findViewById<TextView>(R.id.txtHeaderUserName)
+        txtHeaderName.text = sessionManager.getUserName()
 
-        txtSyncStatus = findViewById(R.id.txtSyncStatus)
-        txtSyncDetail = findViewById(R.id.txtSyncDetail)
-        progressBarHorizontal = findViewById(R.id.progressBarHorizontal)
-        
-        val btnpasar = findViewById<Button>(R.id.btnpasar)
+        rvTareas.layoutManager = LinearLayoutManager(this)
 
+        val btnMenuToggle = findViewById<ImageButton>(R.id.btnMenuToggle)
         btnMenuToggle.setOnClickListener {
             drawerLayout.openDrawer(GravityCompat.START)
         }
@@ -108,50 +97,156 @@ class MainActivity : AppCompatActivity() {
             true
         }
 
-        observarDatos()
-        observarSincronizacionGlobal()
-        
-        if (isWifiAvailable()) {
-            sincronizarTodo(showToast = false)
-        }
-
         btnSyncMain.setOnClickListener {
-            if (isUploadingNow) {
-                Toast.makeText(this, "Espera a que termine el envío para actualizar", Toast.LENGTH_LONG).show()
-                return@setOnClickListener
-            }
             if (isNetworkAvailable()) {
-                Toast.makeText(this, "Actualizando Información...", Toast.LENGTH_SHORT).show()
-                sincronizarTodo(showToast = true)
+                descargarTareas()
+            } else {
+                Toast.makeText(this, "Sin conexión a internet", Toast.LENGTH_SHORT).show()
             }
         }
 
-        autoCompleteSitios.onItemClickListener = AdapterView.OnItemClickListener { parent, _, position, _ ->
-            val nombreSeleccionado = parent.getItemAtPosition(position) as String
-            sitioSeleccionado = listaSitios.find { it.nombre == nombreSeleccionado }
-            sitioSeleccionado?.let {
-                actualizarInformacionSitio(it)
-                btnVerMapa.visibility = View.VISIBLE
-            }
+        cargarTareasLocales()
+        if (isNetworkAvailable()) {
+            descargarTareas()
         }
 
-        btnVerMapa.setOnClickListener {
-            sitioSeleccionado?.let { sitio ->
-                try {
-                    val uri = Uri.parse("geo:${sitio.latitud},${sitio.longitud}?q=${sitio.latitud},${sitio.longitud}(${sitio.nombre})")
-                    startActivity(Intent(Intent.ACTION_VIEW, uri).setPackage("com.google.android.apps.maps"))
-                } catch (e: Exception) {
-                    Toast.makeText(this, "Google Maps no instalado", Toast.LENGTH_SHORT).show()
+        observarSincronizacionGlobal()
+    }
+
+    private fun observarSincronizacionGlobal() {
+        WorkManager.getInstance(this).getWorkInfosByTagLiveData("ReporteWorker").observe(this) { infos ->
+            if (infos.isNullOrEmpty()) return@observe
+            
+            infos.forEach { info ->
+                val tareaId = info.progress.getLong("TAREA_ID", -1L)
+                if (tareaId != -1L) {
+                    val progress = info.progress.getInt("PROGRESS", 0)
+                    val message = info.progress.getString("MESSAGE") ?: ""
+                    val isRunning = info.state == WorkInfo.State.RUNNING
+                    
+                    adapter?.updateProgress(tareaId, progress, message, isRunning)
                 }
             }
         }
+    }
 
-        btnpasar.setOnClickListener {
-            sitioSeleccionado?.let { sitio ->
-                val intent = Intent(this, SeleccionFormularioActivity::class.java)
-                intent.putExtra("ID_SITIO", sitio.idSitio)
-                startActivity(intent)
-            } ?: Toast.makeText(this, "Selecciona un sitio primero", Toast.LENGTH_SHORT).show()
+    private fun cargarTareasLocales() {
+        lifecycleScope.launch {
+            val tareas = withContext(Dispatchers.IO) {
+                db.tareaDao().getTareasPorEstado(EstadoTarea.EN_PROCESO) +
+                db.tareaDao().getTareasPorEstado(EstadoTarea.SUBIENDO)
+            }
+            mostrarTareas(tareas)
+        }
+    }
+
+    private fun descargarTareas() {
+        lifecycleScope.launch {
+            pbLoading.visibility = View.VISIBLE
+            try {
+                Log.d("DEBUG_SYNC", "--- INICIANDO DESCARGA DE TAREAS ---")
+                val response = withContext(Dispatchers.IO) { RetrofitClient.instance.getTareasPendientes() }
+                
+                val jsonString = Gson().toJson(response)
+                Log.d("DEBUG_SYNC", "JSON RECIBIDO: $jsonString")
+
+                if (response.success) {
+                    Log.d("DEBUG_SYNC", "Tareas encontradas: ${response.data.size}")
+                    guardarTareasEnBaseDeDatos(response.data)
+                    cargarTareasLocales()
+                } else {
+                    Log.e("DEBUG_SYNC", "Respuesta API fallida")
+                }
+            } catch (e: Exception) {
+                Log.e("DEBUG_SYNC", "ERROR CRÍTICO: ${e.message}")
+                e.printStackTrace()
+                Toast.makeText(this@MainActivity, "Error al actualizar tareas", Toast.LENGTH_SHORT).show()
+            } finally {
+                pbLoading.visibility = View.GONE
+            }
+        }
+    }
+
+    private suspend fun guardarTareasEnBaseDeDatos(listaApi: List<TareaAsignadaApi>) {
+        withContext(Dispatchers.IO) {
+            db.withTransaction {
+                db.tareaDao().deleteByEstado(EstadoTarea.EN_PROCESO)
+                
+                listaApi.forEach { item ->
+                    Log.d("DEBUG_SYNC", "Guardando Tarea -> ID: ${item.id}, UUID: ${item.uuid}, Sitio: ${item.sitio.nombre}")
+                    
+                    db.sitioDao().insert(item.sitio)
+                    val apiForm = item.formulario
+                    db.formularioDao().insert(Formulario(apiForm.id, apiForm.nombre, apiForm.descripcion))
+                    
+                    apiForm.secciones.forEach { apiSec ->
+                        // Verificamos si esta sección ya viene marcada como completada por la API
+                        val completada = item.secciones_completadas.contains(apiSec.id)
+                        db.seccionDao().insert(Seccion(apiSec.id, apiForm.id, apiSec.nombre, apiSec.zona, completada))
+
+                        apiSec.preguntas.forEach { apiPreg ->
+                            db.preguntaDao().insert(Pregunta(
+                                apiPreg.id, 
+                                apiSec.id, 
+                                apiPreg.descripcion, 
+                                apiPreg.minImagenes, 
+                                apiPreg.maxImagenes
+                            ))
+                            val camposDb = apiPreg.campos.map { apiCampo ->
+                                Campo(apiCampo.id, apiPreg.id, apiCampo.tipo, apiCampo.label, apiCampo.orden)
+                            }
+                            db.campoDao().insertAll(camposDb)
+                        }
+                    }
+
+                    val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+                    val fecha = try { sdf.parse(item.fecha) } catch (e: Exception) { Date() }
+                    
+                    val tipo = when(item.tipo_mantenimiento.lowercase()) {
+                        "preventivo" -> TipoMantenimiento.PREVENTIVO
+                        "correctivo" -> TipoMantenimiento.CORRECTIVO
+                        else -> TipoMantenimiento.PREVENTIVO
+                    }
+
+                    val tareaDb = Tarea(
+                        idTarea = item.id,
+                        idSitio = item.sitio.idSitio,
+                        idFormulario = apiForm.id,
+                        tipoMantenimiento = tipo,
+                        fecha = fecha ?: Date(),
+                        observacionesGenerales = "",
+                        estado = EstadoTarea.EN_PROCESO,
+                        uuid = item.uuid
+                    )
+                    db.tareaDao().insert(tareaDb)
+                }
+            }
+        }
+    }
+
+    private fun mostrarTareas(tareas: List<Tarea>) {
+        if (tareas.isEmpty()) {
+            layoutNoTareas.visibility = View.VISIBLE
+            rvTareas.visibility = View.GONE
+        } else {
+            layoutNoTareas.visibility = View.GONE
+            rvTareas.visibility = View.VISIBLE
+            lifecycleScope.launch {
+                val items = withContext(Dispatchers.IO) {
+                    tareas.map { t ->
+                        val sitio = db.sitioDao().getById(t.idSitio)
+                        val form = db.formularioDao().getById(t.idFormulario)
+                        TareaUIItem(t, sitio, form)
+                    }.toMutableList()
+                }
+                adapter = TareaAdapter(items) { item ->
+                    val intent = Intent(this@MainActivity, SeleccionFormularioActivity::class.java).apply {
+                        putExtra("ID_TAREA", item.tarea.idTarea)
+                    }
+                    startActivity(intent)
+                }
+                rvTareas.adapter = adapter
+            }
         }
     }
 
@@ -170,273 +265,93 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    override fun onResume() {
-        super.onResume()
-        cargarTareasPendientes() 
-        navView.setCheckedItem(R.id.nav_inicio)
-    }
-
-    private fun cargarTareasPendientes() {
-        lifecycleScope.launch {
-            val tareasEnProceso = withContext(Dispatchers.IO) {
-                db.tareaDao().getTareasPorEstado(EstadoTarea.EN_PROCESO)
-            }
-
-            val pendientesReales = withContext(Dispatchers.IO) {
-                tareasEnProceso.filter { tarea ->
-                    db.respuestaDao().getByTarea(tarea.idTarea).any { respuesta ->
-                        db.imagenDao().getByRespuesta(respuesta.idRespuesta).isNotEmpty()
-                    }
-                }
-            }
-
-            containerPendientes.removeAllViews()
-            if (pendientesReales.isEmpty()) {
-                layoutPendientes.visibility = View.GONE
-            } else {
-                layoutPendientes.visibility = View.VISIBLE
-                pendientesReales.forEach { tarea ->
-                    val sitio = withContext(Dispatchers.IO) { db.sitioDao().getById(tarea.idSitio) }
-                    sitio?.let { s ->
-                        val row = LinearLayout(this@MainActivity).apply {
-                            orientation = LinearLayout.HORIZONTAL
-                            gravity = Gravity.CENTER_VERTICAL
-                            setPadding(16, 8, 16, 8)
-                            layoutParams = LinearLayout.LayoutParams(
-                                LinearLayout.LayoutParams.MATCH_PARENT,
-                                LinearLayout.LayoutParams.WRAP_CONTENT
-                            )
-                        }
-
-                        val btnRetomar = MaterialButton(this@MainActivity).apply {
-                            text = "RETOMAR: ${s.nombre}"
-                            layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                            setIconResource(android.R.drawable.ic_menu_edit)
-                            setOnClickListener { irAInspeccion(tarea.idTarea) }
-                        }
-
-                        val btnEliminar = ImageButton(this@MainActivity).apply {
-                            setImageResource(android.R.drawable.ic_menu_delete)
-                            background = null
-                            contentDescription = "Eliminar tarea"
-                            setOnClickListener { confirmarEliminacion(tarea, s.nombre) }
-                        }
-
-                        row.addView(btnRetomar)
-                        row.addView(btnEliminar)
-                        containerPendientes.addView(row)
-                    }
-                }
-            }
-        }
-    }
-
-    private fun confirmarEliminacion(tarea: Tarea, nombreSitio: String) {
-        AlertDialog.Builder(this)
-            .setTitle("Eliminar Inspección")
-            .setMessage("¿Estás seguro de eliminar la inspección de $nombreSitio? Se borrarán todas las fotos tomadas.")
-            .setPositiveButton("ELIMINAR") { _, _ -> eliminarTareaFisicamente(tarea) }
-            .setNegativeButton("CANCELAR", null)
-            .show()
-    }
-
-    private fun eliminarTareaFisicamente(tarea: Tarea) {
-        lifecycleScope.launch {
-            withContext(Dispatchers.IO) {
-                val respuestas = db.respuestaDao().getByTarea(tarea.idTarea)
-                respuestas.forEach { r ->
-                    val fotos = db.imagenDao().getByRespuesta(r.idRespuesta)
-                    fotos.forEach { img ->
-                        val file = File(img.rutaArchivo)
-                        if (file.exists()) file.delete()
-                    }
-                    db.valorRespuestaDao().deleteByRespuesta(r.idRespuesta)
-                    db.imagenDao().deleteByRespuesta(r.idRespuesta)
-                }
-                db.respuestaDao().deleteByTarea(tarea.idTarea)
-                db.tareaDao().delete(tarea)
-            }
-            Toast.makeText(this@MainActivity, "Inspección eliminada", Toast.LENGTH_SHORT).show()
-            cargarTareasPendientes()
-        }
-    }
-
-    private fun actualizarInformacionSitio(sitio: Sitio) {
-        lifecycleScope.launch {
-            val tareaActiva = withContext(Dispatchers.IO) { db.tareaDao().getTareaActivaPorSitio(sitio.idSitio) }
-            
-            var esPendienteConFotos = false
-            if (tareaActiva != null) {
-                esPendienteConFotos = withContext(Dispatchers.IO) {
-                    db.respuestaDao().getByTarea(tareaActiva.idTarea).any { r ->
-                        db.imagenDao().getByRespuesta(r.idRespuesta).isNotEmpty()
-                    }
-                }
-            }
-        
-            val status = if (esPendienteConFotos) "PENDIENTE" else "LIBRE"
-
-            txtInfo.text = """
-                ID SITIO: ${sitio.idSitio}
-                NOMBRE: ${sitio.nombre}
-                TEAM: ${sitio.teem}
-                VISITAS: ${sitio.visit}
-                MORFOLOGÍA: ${sitio.siteMorfology}
-                NUEVA MORFOLOGÍA: ${sitio.newMorfology}
-            """.trimIndent()
-        }
-    }
-
-    private fun observarSincronizacionGlobal() {
-        WorkManager.getInstance(this).getWorkInfosByTagLiveData("ReporteWorker").observe(this) { infos ->
-            if (infos.isNullOrEmpty()) {
-                cardSyncStatus.visibility = View.GONE
-                isUploadingNow = false
-                btnSyncMain.alpha = 1.0f
-                return@observe
-            }
-
-            val infoActiva = infos.firstOrNull { it.state == WorkInfo.State.RUNNING || it.state == WorkInfo.State.ENQUEUED }
-            val infoExitosa = infos.firstOrNull { it.state == WorkInfo.State.SUCCEEDED }
-
-            if (infoActiva != null) {
-                isUploadingNow = true
-                btnSyncMain.alpha = 0.5f
-                cardSyncStatus.visibility = View.VISIBLE
-                val progress = infoActiva.progress.getInt("PROGRESS", 0)
-                val current = infoActiva.progress.getInt("CURRENT_IMG", 0)
-                val total = infoActiva.progress.getInt("TOTAL_IMG", 0)
-                val status = infoActiva.progress.getString("STATUS") ?: "WAITING"
-                val sitio = infoActiva.progress.getString("SITIO_NOMBRE") ?: "Sincronizando"
-
-                when (status) {
-                    "UPLOADING" -> {
-                        txtSyncStatus.text = "Estado: Subiendo $sitio..."
-                        progressBarHorizontal.isIndeterminate = false
-                        progressBarHorizontal.progress = progress
-                        txtSyncDetail.text = "$progress% - Imagen $current de $total"
-                    }
-                    "WAITING" -> {
-                        txtSyncStatus.text = "Estado: Esperando conexión..."
-                        progressBarHorizontal.isIndeterminate = true
-                        txtSyncDetail.text = "La subida se reanudará al tener internet"
-                    }
-                    "ERROR" -> {
-                        txtSyncStatus.text = "Estado: Error al subir"
-                        txtSyncDetail.text = "Se reintentará automáticamente"
-                    }
-                }
-            } else if (infoExitosa != null) {
-                isUploadingNow = false
-                btnSyncMain.alpha = 1.0f
-                txtSyncStatus.text = "Estado: ¡Subido correctamente!"
-                progressBarHorizontal.isIndeterminate = false
-                progressBarHorizontal.progress = 100
-                txtSyncDetail.text = "Todos los datos están en el servidor"
-                
-                cardSyncStatus.postDelayed({ 
-                    cardSyncStatus.visibility = View.GONE 
-                    WorkManager.getInstance(this).pruneWork()
-                }, 3000)
-            } else {
-                isUploadingNow = false
-                btnSyncMain.alpha = 1.0f
-                cardSyncStatus.visibility = View.GONE
-            }
-            
-            cargarTareasPendientes()
-        }
-    }
-
-    private fun irAInspeccion(idTarea: Long) {
-        val intent = Intent(this, InspeccionActivity::class.java).apply {
-            putExtra("ID_TAREA", idTarea)
-        }
-        startActivity(intent)
-    }
-
-    private fun isWifiAvailable(): Boolean {
-        val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val caps = cm.getNetworkCapabilities(cm.activeNetwork)
-        return caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
-    }
-
     private fun isNetworkAvailable(): Boolean {
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val caps = cm.getNetworkCapabilities(cm.activeNetwork)
         return caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true
     }
 
-    private fun observarDatos() {
-        lifecycleScope.launch {
-            db.sitioDao().getAllFlow().collectLatest { sitios ->
-                listaSitios = sitios
-                autoCompleteSitios.setAdapter(ArrayAdapter(this@MainActivity, android.R.layout.simple_dropdown_item_1line, sitios.map { it.nombre }))
+    data class TareaUIItem(
+        val tarea: Tarea, 
+        val sitio: Sitio?, 
+        val formulario: Formulario?,
+        var syncProgress: Int = 0,
+        var syncMessage: String = "",
+        var isSyncing: Boolean = false
+    )
+
+    class TareaAdapter(
+        private val lista: MutableList<TareaUIItem>,
+        private val onClick: (TareaUIItem) -> Unit
+    ) : RecyclerView.Adapter<TareaAdapter.VH>() {
+        
+        fun updateProgress(tareaId: Long, progress: Int, message: String, isSyncing: Boolean) {
+            val index = lista.indexOfFirst { it.tarea.idTarea == tareaId }
+            if (index != -1) {
+                lista[index].syncProgress = progress
+                lista[index].syncMessage = message
+                lista[index].isSyncing = isSyncing
+                notifyItemChanged(index)
             }
         }
-    }
 
-    private fun sincronizarTodo(showToast: Boolean) {
-        if (isUploadingNow) return
-
-        lifecycleScope.launch {
-            try {
-                withContext(Dispatchers.IO) {
-                    val resSitios = RetrofitClient.instance.getSitios()
-                    val resFormsList = RetrofitClient.instance.getListaFormularios()
-
-                    db.withTransaction {
-                        if (resSitios.data.isNotEmpty()) {
-                            // En lugar de borrar todo, podrías usar un UPSERT si el DAO lo permite.
-                            // Por ahora, mantenemos la lógica pero protegida por isUploadingNow
-                            db.sitioDao().deleteAll()
-                            db.sitioDao().insertAll(resSitios.data)
-                        }
-                        
-                        if (resFormsList.data.isNotEmpty()) {
-                            db.formularioDao().deleteAll()
-                            db.seccionDao().deleteAll()
-                            db.preguntaDao().deleteAll()
-                            db.campoDao().deleteAll()
-
-                            resFormsList.data.forEach { formShort ->
-                                val resFull = RetrofitClient.instance.getFormularioCompleto(formShort.id)
-                                if (resFull.success) {
-                                    val apiForm = resFull.data
-                                    db.formularioDao().insert(Formulario(apiForm.id, apiForm.nombre, apiForm.descripcion))
-                                    
-                                    apiForm.secciones.forEach { apiSec: com.example.pruebaderoom.data.SeccionApiData ->
-                                        db.seccionDao().insert(Seccion(apiSec.id, apiForm.id, apiSec.nombre, apiSec.zona))
-                                        
-                                        apiSec.preguntas.forEach { apiPreg: com.example.pruebaderoom.data.PreguntaApiData ->
-                                            db.preguntaDao().insert(Pregunta(
-                                                apiPreg.id, 
-                                                apiSec.id, 
-                                                apiPreg.descripcion, 
-                                                apiPreg.minImagenes, 
-                                                apiPreg.maxImagenes
-                                            ))
-                                            
-                                            val camposDb = apiPreg.campos.map { apiCampo: com.example.pruebaderoom.data.CampoApiData ->
-                                                Campo(apiCampo.id, apiPreg.id, apiCampo.tipo, apiCampo.label, apiCampo.orden)
-                                            }
-                                            db.campoDao().insertAll(camposDb)
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                if (showToast) {
-                    withContext(Dispatchers.Main) {
-                        Toast.makeText(this@MainActivity, "Actualización exitosa", Toast.LENGTH_SHORT).show()
-                    }
-                }
-                cargarTareasPendientes()
-            } catch (e: Exception) { 
-                Log.e("SYNC", e.message ?: "Error desconocido")
-            }
+        class VH(v: View) : RecyclerView.ViewHolder(v) {
+            val txtSitio: TextView = v.findViewById(R.id.txtSitioNombre)
+            val txtForm: TextView = v.findViewById(R.id.txtFormularioNombre)
+            val txtFecha: TextView = v.findViewById(R.id.txtFecha)
+            val txtTipo: TextView = v.findViewById(R.id.txtTipoMaint)
+            val txtBadge: TextView = v.findViewById(R.id.txtBadgeEstado)
+            val viewIndicator: View = v.findViewById(R.id.viewStatusIndicator)
+            
+            val layoutProgress: View = v.findViewById(R.id.layoutSyncProgress)
+            val pbSync: ProgressBar = v.findViewById(R.id.pbSyncTask)
+            val txtSyncDetail: TextView = v.findViewById(R.id.txtSyncDetailTask)
         }
+
+        override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = VH(
+            LayoutInflater.from(parent.context).inflate(R.layout.item_tarea_asignada, parent, false)
+        )
+
+        override fun onBindViewHolder(holder: VH, position: Int) {
+            val item = lista[position]
+            holder.txtSitio.text = item.sitio?.nombre ?: "Sitio ID: ${item.tarea.idSitio}"
+            holder.txtForm.text = item.formulario?.nombre ?: "Formulario"
+            val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
+            holder.txtFecha.text = "Fecha: ${sdf.format(item.tarea.fecha)}"
+            holder.txtTipo.text = item.tarea.tipoMantenimiento.name
+
+            // Lógica de Estado
+            if (item.isSyncing) {
+                holder.txtBadge.text = "ENVIANDO"
+                holder.txtBadge.setBackgroundColor(Color.parseColor("#FF9800"))
+                holder.viewIndicator.setBackgroundColor(Color.parseColor("#FF9800"))
+                holder.layoutProgress.visibility = View.VISIBLE
+                holder.pbSync.progress = item.syncProgress
+                holder.txtSyncDetail.text = item.syncMessage
+            } else {
+                holder.layoutProgress.visibility = View.GONE
+                when (item.tarea.estado) {
+                    EstadoTarea.EN_PROCESO -> {
+                        holder.txtBadge.text = "PENDIENTE"
+                        holder.txtBadge.setBackgroundColor(Color.parseColor("#757575"))
+                        holder.viewIndicator.setBackgroundColor(Color.parseColor("#1E2A44"))
+                    }
+                    EstadoTarea.SUBIENDO -> {
+                        holder.txtBadge.text = "EN COLA"
+                        holder.txtBadge.setBackgroundColor(Color.parseColor("#FF9800"))
+                        holder.viewIndicator.setBackgroundColor(Color.parseColor("#FF9800"))
+                    }
+                    EstadoTarea.FINALIZADA -> {
+                        holder.txtBadge.text = "LISTO"
+                        holder.txtBadge.setBackgroundColor(Color.parseColor("#43A047"))
+                        holder.viewIndicator.setBackgroundColor(Color.parseColor("#43A047"))
+                    }
+                }
+            }
+
+            holder.itemView.setOnClickListener { onClick(item) }
+        }
+
+        override fun getItemCount() = lista.size
     }
 }

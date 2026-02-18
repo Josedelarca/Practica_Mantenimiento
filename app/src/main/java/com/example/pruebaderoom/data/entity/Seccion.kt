@@ -17,5 +17,8 @@ data class Seccion(
     val nombre: String,
 
     @ColumnInfo(name = "zona")
-    val zona: String = "ambos" // 'suelo', 'altura' o 'ambos'
+    val zona: String = "ambos",
+
+    @ColumnInfo(name = "is_completada")
+    val isCompletada: Boolean = false // <-- NUEVO: Para saber si el servidor ya la aceptó
 )

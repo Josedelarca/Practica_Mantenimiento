@@ -12,6 +12,9 @@ interface SitioService {
     @POST("api/login")
     suspend fun login(@Body credentials: LoginRequest): Response<LoginResponse>
 
+    @GET("api/tareas/pendientes")
+    suspend fun getTareasPendientes(): TareasPendientesResponse
+
     @GET("api/sitios")
     suspend fun getSitios(): SitioResponse
 
@@ -31,7 +34,7 @@ interface SitioService {
         @Part("respuesta_id") respuestaId: RequestBody,
         @Part("uuid") uuid: RequestBody,
         @Part imagen: MultipartBody.Part
-    ): Response<Unit>
+    ): Response<ImageUploadResponse>
 
     @Multipart
     @POST("api/tareas/bulk")
@@ -40,6 +43,29 @@ interface SitioService {
         @Part imagenes: List<MultipartBody.Part>
     ): Response<Unit>
 }
+
+// --- DATA CLASSES PARA IMAGENES ---
+data class ImageUploadResponse(
+    val success: Boolean?,
+    val mensaje: String?,
+    val data: Any?
+)
+
+// --- DATA CLASSES PARA TAREAS ASIGNADAS ---
+data class TareasPendientesResponse(
+    val success: Boolean,
+    val data: List<TareaAsignadaApi>
+)
+
+data class TareaAsignadaApi(
+    val id: Long,
+    val uuid: String,
+    val fecha: String,
+    val tipo_mantenimiento: String,
+    val sitio: Sitio,
+    val formulario: FormularioApiData,
+    val secciones_completadas: List<Long>
+)
 
 // --- LOGIN DATA CLASSES ---
 data class LoginRequest(
@@ -54,7 +80,13 @@ data class LoginResponse(
 
 data class LoginData(
     val token: String,
-    val user: Any? // Puedes definir una clase User si necesitas mas datos
+    val user: UserData?
+)
+
+data class UserData(
+    val id: Long,
+    val name: String,
+    val email: String
 )
 
 // --- DATA CLASSES PARA MÚLTIPLES FORMULARIOS ---
@@ -78,7 +110,8 @@ data class SyncTareaRequest(
     val formulario_id: Long,
     val fecha: String,
     val tipo_mantenimiento: String,
-    val respuestas: List<SyncRespuestaRequest>
+    val respuestas: List<SyncRespuestaRequest>,
+    val secciones_completadas: List<Long> = emptyList()
 )
 
 data class SyncRespuestaRequest(
@@ -98,6 +131,7 @@ data class SyncTareaResponse(
 
 data class TareaMappingData(
     val tarea_id: Long,
+    @SerializedName("estado_actual") val estado_actual: String?,
     val mapa_respuestas: List<RespuestaMapping>
 )
 

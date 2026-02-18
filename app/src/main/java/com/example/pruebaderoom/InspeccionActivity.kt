@@ -13,6 +13,8 @@ import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -64,61 +66,26 @@ class InspeccionActivity : AppCompatActivity() {
         btnVolver?.setOnClickListener { finish() }
 
         btnEnviar.setOnClickListener {
-            programarSincronizacionWorker()
+            enviarYSalir()
         }
         
         actualizarEstadoBotonEnvio()
-        observarProgresoEnvio()
         cargarYMostrar()
     }
 
-    private fun observarProgresoEnvio() {
-        val uniqueWorkName = "sync_tarea_$idTareaRecibido"
-        WorkManager.getInstance(this)
-            .getWorkInfosForUniqueWorkLiveData(uniqueWorkName)
-            .observe(this) { infos ->
-                val info = infos?.firstOrNull() ?: return@observe
-                
-                when (info.state) {
-                    WorkInfo.State.RUNNING -> {
-                        val progress = info.progress.getInt("PROGRESS", 0)
-                        val current = info.progress.getInt("CURRENT_IMG", 0)
-                        val total = info.progress.getInt("TOTAL_IMG", 0)
-                        val status = info.progress.getString("STATUS") ?: "SUBIENDO"
-
-                        btnEnviar.isEnabled = false
-                        btnEnviar.alpha = 0.7f
-                        
-                        if (status == "UPLOADING") {
-                            btnEnviar.text = "SUBIENDO: $progress% (FOTO $current/$total)"
-                        } else {
-                            btnEnviar.text = "EN ESPERA DE RED..."
-                        }
-                    }
-                    WorkInfo.State.SUCCEEDED -> {
-                        Toast.makeText(this, "¡Reporte enviado con éxito!", Toast.LENGTH_SHORT).show()
-                        finish() 
-                    }
-                    WorkInfo.State.FAILED -> {
-                        btnEnviar.isEnabled = true
-                        btnEnviar.alpha = 1.0f
-                        btnEnviar.text = "ERROR: REINTENTAR ENVÍO"
-                    }
-                    else -> {}
-                }
-            }
-    }
-
-    private fun programarSincronizacionWorker() {
+    private fun enviarYSalir() {
         lifecycleScope.launch {
+            // 1. Cambiamos estado local de la tarea para bloquearla
             withContext(Dispatchers.IO) {
-                db.tareaDao().getById(idTareaRecibido)?.let { tarea ->
-                    db.tareaDao().insert(tarea.copy(estado = EstadoTarea.SUBIENDO))
+                db.tareaDao().getById(idTareaRecibido)?.let {
+                    db.tareaDao().insert(it.copy(estado = EstadoTarea.SUBIENDO))
                 }
             }
 
+            // 2. Programamos el Worker
             val data = Data.Builder()
                 .putLong("ID_TAREA", idTareaRecibido)
+                .putString("ZONA_TRABAJADA", zonaElegida)
                 .build()
 
             val constraints = Constraints.Builder()
@@ -128,7 +95,6 @@ class InspeccionActivity : AppCompatActivity() {
             val syncWorkRequest = OneTimeWorkRequestBuilder<ReporteWorker>()
                 .setInputData(data)
                 .setConstraints(constraints)
-                .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, java.util.concurrent.TimeUnit.SECONDS)
                 .addTag("ReporteWorker")
                 .build()
 
@@ -137,35 +103,30 @@ class InspeccionActivity : AppCompatActivity() {
                 ExistingWorkPolicy.KEEP,
                 syncWorkRequest
             )
+
+            // 3. SALIMOS DE LA ACTIVIDAD INMEDIATAMENTE
+            Toast.makeText(this@InspeccionActivity, "Iniciando envío en segundo plano...", Toast.LENGTH_LONG).show()
+            val intent = Intent(this@InspeccionActivity, MainActivity::class.java)
+            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            startActivity(intent)
+            finish()
         }
     }
 
     private fun actualizarEstadoBotonEnvio() {
         lifecycleScope.launch {
-            val estaCompleto = withContext(Dispatchers.IO) {
-                val tarea = db.tareaDao().getById(idTareaRecibido) ?: return@withContext false
-                val secciones = db.seccionDao().getByFormulario(tarea.idFormulario)
-                    .filter { it.zona == zonaElegida || it.zona == "ambos" }
-                
-                if (secciones.isEmpty()) return@withContext false
-
-                secciones.all { seccion ->
-                    val preguntas = db.preguntaDao().getBySeccion(seccion.idSeccion)
-                    preguntas.all { pregunta ->
-                        val respuesta = db.respuestaDao().getAll().find { 
-                            it.idPregunta == pregunta.idPregunta && it.idTarea == idTareaRecibido 
-                        }
-                        if (respuesta == null) return@all false
-                        val cantImagenes = db.imagenDao().getByRespuesta(respuesta.idRespuesta).size
-                        cantImagenes >= pregunta.minImagenes
-                    }
+            val tieneAlgoQueEnviar = withContext(Dispatchers.IO) {
+                val respuestas = db.respuestaDao().getByTarea(idTareaRecibido)
+                val tieneImagenesPendientes = respuestas.any { r ->
+                    db.imagenDao().getByRespuesta(r.idRespuesta).any { !it.isSynced }
                 }
+                respuestas.isNotEmpty() || tieneImagenesPendientes
             }
 
             withContext(Dispatchers.Main) {
-                btnEnviar.isEnabled = estaCompleto
-                btnEnviar.alpha = if (estaCompleto) 1.0f else 0.5f
-                btnEnviar.text = if (estaCompleto) "ENVIAR REPORTE" else "FALTAN FOTOS"
+                btnEnviar.isEnabled = tieneAlgoQueEnviar
+                btnEnviar.alpha = if (tieneAlgoQueEnviar) 1.0f else 0.5f
+                btnEnviar.text = if (tieneAlgoQueEnviar) "ENVIAR PARTE (${zonaElegida.uppercase()})" else "SIN CAMBIOS"
             }
         }
     }
@@ -246,24 +207,16 @@ class InspeccionActivity : AppCompatActivity() {
                     }
 
                     holder.txtCant.text = "Fotos: $cantFotos / Mínimo: ${pregunta.minImagenes}"
-                    holder.txtCant.setTextColor(if (cantFotos >= pregunta.minImagenes) Color.parseColor("#43A047") else Color.parseColor("#757575"))
+                    
+                    val colorTexto = if (cantFotos >= pregunta.minImagenes && cantFotos > 0) "#43A047" else "#757575"
+                    holder.txtCant.setTextColor(Color.parseColor(colorTexto))
 
-                    when {
-                        respuesta?.texto == "Finalizado" -> {
-                            holder.txtDesc.setTextColor(Color.parseColor("#43A047"))
-                            holder.btnCamara.text = "EDITAR"
-                            holder.btnCamara.setTextColor(Color.parseColor("#43A047"))
-                        }
-                        respuesta?.texto == "En proceso" -> {
-                            holder.txtDesc.setTextColor(Color.parseColor("#E53935"))
-                            holder.btnCamara.text = "INCOMPLETA"
-                            holder.btnCamara.setTextColor(Color.parseColor("#E53935"))
-                        }
-                        else -> {
-                            holder.txtDesc.setTextColor(Color.parseColor("#333333"))
-                            holder.btnCamara.text = "TOMAR EVIDENCIA"
-                            holder.btnCamara.setTextColor(Color.parseColor("#1E2A44"))
-                        }
+                    if (cantFotos > 0) {
+                        holder.btnCamara.text = "EDITAR"
+                        holder.btnCamara.setTextColor(Color.parseColor("#43A047"))
+                    } else {
+                        holder.btnCamara.text = "TOMAR EVIDENCIA"
+                        holder.btnCamara.setTextColor(Color.parseColor("#1E2A44"))
                     }
                 }
 

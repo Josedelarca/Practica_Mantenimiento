@@ -62,9 +62,15 @@ class LoginActivity : AppCompatActivity() {
             try {
                 val response = RetrofitClient.instance.login(LoginRequest(email, password))
                 if (response.isSuccessful && response.body()?.success == true) {
-                    val token = response.body()?.data?.token
+                    val loginData = response.body()?.data
+                    val token = loginData?.token
+                    val userName = loginData?.user?.name
+                    
                     if (token != null) {
                         sessionManager.saveToken(token)
+                        if (userName != null) {
+                            sessionManager.saveUserName(userName)
+                        }
                         startMainActivity()
                     } else {
                         Toast.makeText(this@LoginActivity, "Token no recibido", Toast.LENGTH_SHORT).show()

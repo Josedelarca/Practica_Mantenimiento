@@ -21,11 +21,19 @@ class SessionManager(context: Context) {
         prefs.edit().putString("auth_token", token).apply()
     }
 
+    fun saveUserName(name: String) {
+        prefs.edit().putString("user_name", name).apply()
+    }
+
     fun getToken(): String? {
         return prefs.getString("auth_token", null)
     }
 
+    fun getUserName(): String? {
+        return prefs.getString("user_name", "Usuario")
+    }
+
     fun clearSession() {
-        prefs.edit().remove("auth_token").apply()
+        prefs.edit().remove("auth_token").remove("user_name").apply()
     }
 }

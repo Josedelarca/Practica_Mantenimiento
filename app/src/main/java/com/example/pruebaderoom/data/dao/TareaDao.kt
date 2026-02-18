@@ -28,6 +28,9 @@ interface TareaDao {
     @Query("SELECT * FROM Tarea WHERE estado = :estado")
     suspend fun getTareasPorEstado(estado: EstadoTarea): List<Tarea>
 
+    @Query("DELETE FROM Tarea WHERE estado = :estado")
+    suspend fun deleteByEstado(estado: EstadoTarea)
+
     @Delete
     suspend fun delete(tarea: Tarea)
 }
