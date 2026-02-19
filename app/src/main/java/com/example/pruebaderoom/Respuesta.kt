@@ -70,38 +70,43 @@ class Respuesta : AppCompatActivity() {
         }
     }
 
-    // Usamos un límite alto por defecto en el contrato y validamos dinámicamente en el callback
     private val pickMultipleMedia = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(100)) { uris ->
         if (uris.isNotEmpty()) {
+            // Eliminar URIs duplicados en la misma selección
+            val uniqueUris = uris.distinct()
+            
             lifecycleScope.launch {
-                val cupoDisponible = maxOf(0, maxFotosPermitidas - listaFotos.size)
+                var cupoDisponible = maxOf(0, maxFotosPermitidas - listaFotos.size)
                 
                 if (cupoDisponible == 0) {
                     Toast.makeText(this@Respuesta, "Límite de fotos alcanzado", Toast.LENGTH_SHORT).show()
                     return@launch
                 }
 
-                val urisAProcesar = if (uris.size > cupoDisponible) {
-                    Toast.makeText(this@Respuesta, "Solo se agregarán $cupoDisponible fotos (máximo permitido: $maxFotosPermitidas)", Toast.LENGTH_LONG).show()
-                    uris.take(cupoDisponible)
+                val urisAProcesar = if (uniqueUris.size > cupoDisponible) {
+                    Toast.makeText(this@Respuesta, "Solo se agregarán $cupoDisponible fotos", Toast.LENGTH_LONG).show()
+                    uniqueUris.take(cupoDisponible)
                 } else {
-                    uris
+                    uniqueUris
                 }
 
                 urisAProcesar.forEach { uri ->
-                    try {
-                        val bitmap = withContext(Dispatchers.IO) {
-                            contentResolver.openInputStream(uri)?.use { inputStream ->
-                                BitmapFactory.decodeStream(inputStream)
+                    if (cupoDisponible > 0) {
+                        try {
+                            val bitmap = withContext(Dispatchers.IO) {
+                                contentResolver.openInputStream(uri)?.use { inputStream ->
+                                    BitmapFactory.decodeStream(inputStream)
+                                }
                             }
+                            
+                            bitmap?.let { b ->
+                                val bitmapConMarca = agregarMarcaDeAgua(b)
+                                guardarFotoAlInstante(bitmapConMarca)
+                                cupoDisponible--
+                            }
+                        } catch (e: Exception) {
+                            Toast.makeText(this@Respuesta, "Error al cargar imagen", Toast.LENGTH_SHORT).show()
                         }
-                        
-                        bitmap?.let { b ->
-                            val bitmapConMarca = agregarMarcaDeAgua(b)
-                            guardarFotoAlInstante(bitmapConMarca)
-                        }
-                    } catch (e: Exception) {
-                        Toast.makeText(this@Respuesta, "Error al cargar imagen", Toast.LENGTH_SHORT).show()
                     }
                 }
             }
@@ -208,9 +213,11 @@ class Respuesta : AppCompatActivity() {
                         val bitmap = BitmapFactory.decodeFile(img.rutaArchivo)
                         if (bitmap != null) {
                             withContext(Dispatchers.Main) {
-                                listaFotos.add(FotoEvidencia(bitmap, img.rutaArchivo))
-                                adapter.notifyItemInserted(listaFotos.size - 1)
-                                actualizarTextoContador()
+                                if (listaFotos.none { it.rutaExistente == img.rutaArchivo }) {
+                                    listaFotos.add(FotoEvidencia(bitmap, img.rutaArchivo))
+                                    adapter.notifyItemInserted(listaFotos.size - 1)
+                                    actualizarTextoContador()
+                                }
                             }
                         }
                     }
@@ -436,13 +443,14 @@ class Respuesta : AppCompatActivity() {
                         }
                     }
 
-                    val timeStamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.getDefault()).format(Date())
+                    // Usar nanoTime para evitar duplicidad de nombres en ráfagas de guardado
+                    val timeStamp = System.nanoTime().toString()
                     val nombreArchivo = "IMG_${idRespuestaActual}_${timeStamp}.jpg"
                     val file = File(filesDir, nombreArchivo)
                     
                     FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.JPEG, 80, it) }
 
-                    db.imagenDao().insert(Imagen(System.currentTimeMillis(), idRespuestaActual, file.absolutePath, "HD", Date()))
+                    db.imagenDao().insert(Imagen(System.currentTimeMillis() + Random().nextInt(1000), idRespuestaActual, file.absolutePath, "HD", Date()))
                     file.absolutePath
                 }
                 listaFotos.add(FotoEvidencia(bitmap, nuevaRuta))
