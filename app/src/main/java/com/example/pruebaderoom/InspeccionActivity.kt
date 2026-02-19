@@ -13,8 +13,6 @@ import android.widget.Toast
 import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
-import androidx.core.view.ViewCompat
-import androidx.core.view.WindowInsetsCompat
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -75,18 +73,21 @@ class InspeccionActivity : AppCompatActivity() {
 
     private fun enviarYSalir() {
         lifecycleScope.launch {
-            // 1. Cambiamos estado local de la tarea para bloquearla
             withContext(Dispatchers.IO) {
-                db.tareaDao().getById(idTareaRecibido)?.let {
+                val tarea = db.tareaDao().getById(idTareaRecibido)
+                tarea?.let {
+                    db.seccionDao().updateEnviandoPorZona(it.idFormulario, zonaElegida, true)
                     db.tareaDao().insert(it.copy(estado = EstadoTarea.SUBIENDO))
                 }
             }
 
-            // 2. Programamos el Worker
             val data = Data.Builder()
                 .putLong("ID_TAREA", idTareaRecibido)
                 .putString("ZONA_TRABAJADA", zonaElegida)
                 .build()
+
+            // IMPORTANTE: Nombre único incluyendo la zona para evitar colisiones offline
+            val workName = "sync_${idTareaRecibido}_${zonaElegida}"
 
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(NetworkType.CONNECTED)
@@ -99,16 +100,12 @@ class InspeccionActivity : AppCompatActivity() {
                 .build()
 
             WorkManager.getInstance(this@InspeccionActivity).enqueueUniqueWork(
-                "sync_tarea_$idTareaRecibido",
-                ExistingWorkPolicy.KEEP,
+                workName,
+                ExistingWorkPolicy.REPLACE, // Reemplazamos para asegurar que los últimos datos offline sean los que se envíen
                 syncWorkRequest
             )
 
-            // 3. SALIMOS DE LA ACTIVIDAD INMEDIATAMENTE
-            Toast.makeText(this@InspeccionActivity, "Iniciando envío en segundo plano...", Toast.LENGTH_LONG).show()
-            val intent = Intent(this@InspeccionActivity, MainActivity::class.java)
-            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-            startActivity(intent)
+            Toast.makeText(this@InspeccionActivity, "Envío programado para zona $zonaElegida", Toast.LENGTH_SHORT).show()
             finish()
         }
     }
