@@ -20,5 +20,8 @@ data class Seccion(
     val zona: String = "ambos",
 
     @ColumnInfo(name = "is_completada")
-    val isCompletada: Boolean = false // <-- NUEVO: Para saber si el servidor ya la aceptó
+    val isCompletada: Boolean = false,
+
+    @ColumnInfo(name = "is_enviando")
+    val isEnviando: Boolean = false // Para bloquear la sección mientras se sube
 )

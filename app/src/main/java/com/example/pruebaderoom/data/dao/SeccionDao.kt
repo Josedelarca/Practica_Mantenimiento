@@ -27,6 +27,12 @@ interface SeccionDao {
     @Query("UPDATE Seccion SET is_completada = :completada WHERE id_seccion = :idSeccion")
     suspend fun updateCompletada(idSeccion: Long, completada: Boolean)
 
+    @Query("UPDATE Seccion SET is_enviando = :enviando WHERE id_seccion = :idSeccion")
+    suspend fun updateEnviando(idSeccion: Long, enviando: Boolean)
+
+    @Query("UPDATE Seccion SET is_enviando = :enviando WHERE id_formulario = :idFormulario AND (zona = :zona OR zona = 'ambos')")
+    suspend fun updateEnviandoPorZona(idFormulario: Long, zona: String, enviando: Boolean)
+
     @Query("DELETE FROM Seccion WHERE id_formulario = :idFormulario AND id_seccion NOT IN (:idsApi)")
     suspend fun deleteOldSecciones(idFormulario: Long, idsApi: List<Long>)
 

@@ -71,10 +71,13 @@ class ReporteWorker(
                 seccionesDeEstaZona.any { it.idSeccion == preg?.idSeccion }
             }
 
-            if (!isNetworkAvailable()) return ListenableWorker.Result.retry()
+            if (!isNetworkAvailable()) {
+                resetEstadoEnviando(idTareaLocal, zonaActual)
+                return ListenableWorker.Result.retry()
+            }
 
-            // PASO 1: Registro Inicial
-            updateSyncProgress(idTareaLocal, -1, 10, "Registrando respuestas...")
+            // PASO 1: Registro Inicial (Obtener IDs del servidor)
+            updateSyncProgress(idTareaLocal, zonaActual, -1, 10, "Registrando respuestas...")
             
             val listaRespuestasSync = respuestasAEnviar.map { resp ->
                 val valores = db.valorRespuestaDao().getByRespuesta(resp.idRespuesta).map { v ->
@@ -94,7 +97,10 @@ class ReporteWorker(
             )
 
             val responseTarea = api.crearTarea(syncRequest)
-            if (!responseTarea.isSuccessful) return ListenableWorker.Result.retry()
+            if (!responseTarea.isSuccessful) {
+                resetEstadoEnviando(idTareaLocal, zonaActual)
+                return ListenableWorker.Result.retry()
+            }
 
             val mapping = responseTarea.body()?.data ?: return ListenableWorker.Result.failure()
             val tareaIdServidor = mapping.tarea_id
@@ -105,46 +111,42 @@ class ReporteWorker(
             var huboFalloEnFotos = false
 
             for (seccion in seccionesDeEstaZona) {
+                var seccionTotalmenteSubida = true
                 val preguntasDeSeccion = db.preguntaDao().getBySeccion(seccion.idSeccion)
                 
-                // Contar total de imágenes en la sección
-                var totalImgsSeccion = 0
-                preguntasDeSeccion.forEach { p ->
-                    val r = respuestasAEnviar.find { it.idPregunta == p.idPregunta }
-                    if (r != null) totalImgsSeccion += db.imagenDao().getByRespuesta(r.idRespuesta).size
-                }
-
-                var subidasEnSeccion = 0
-                var seccionTotalmenteSubida = true
-                
-                for (pregunta in preguntasDeSeccion) {
-                    val respLocal = respuestasAEnviar.find { it.idPregunta == pregunta.idPregunta } ?: continue
-                    val imagenesPregunta = db.imagenDao().getByRespuesta(respLocal.idRespuesta)
-                    val serverRespuestaId = mapPreguntaRespuesta[pregunta.idPregunta]
-
-                    if (serverRespuestaId == null) {
-                        seccionTotalmenteSubida = false
-                        subidasEnSeccion += imagenesPregunta.size
-                        continue
+                // Contar total de imágenes de esta sección para el mensaje de progreso
+                val imagenesDeSeccion = mutableListOf<Imagen>()
+                for (preg in preguntasDeSeccion) {
+                    val resp = respuestasAEnviar.find { it.idPregunta == preg.idPregunta }
+                    if (resp != null) {
+                        imagenesDeSeccion.addAll(db.imagenDao().getByRespuesta(resp.idRespuesta))
                     }
+                }
+                
+                val totalImgs = imagenesDeSeccion.size
+                var imgsContadas = 0
 
-                    for (img in imagenesPregunta) {
-                        subidasEnSeccion++
-                        if (img.isSynced) continue
+                for (img in imagenesDeSeccion) {
+                    imgsContadas++
+                    if (img.isSynced) continue
+                    
+                    val file = File(img.rutaArchivo)
+                    if (file.exists()) {
+                        val optimized = ImageOptimizerHelper.optimize(applicationContext, file)
                         
-                        val file = File(img.rutaArchivo)
-                        if (file.exists()) {
-                            val optimized = ImageOptimizerHelper.optimize(applicationContext, file)
-                            
-                            // Mensaje con contador: Foto X de Y
-                            updateSyncProgress(idTareaLocal, seccion.idSeccion, 50,
-                                "Subiendo foto $subidasEnSeccion de $totalImgsSeccion en ${seccion.nombre}...")
-                            
+                        // NOTIFICAR PROGRESO FOTO POR FOTO
+                        updateSyncProgress(idTareaLocal, zonaActual, seccion.idSeccion, 50, 
+                            "Subiendo foto $imgsContadas de $totalImgs...")
+                        
+                        // Buscar ID de pregunta para esta imagen
+                        val pregId = db.respuestaDao().getById(img.idRespuesta)?.idPregunta ?: -1L
+                        val serverRespuestaId = mapPreguntaRespuesta[pregId]
+                        
+                        if (serverRespuestaId != null) {
                             val response = enviarImagenIndividual(tareaIdServidor, serverRespuestaId, img, optimized ?: file)
                             val httpCode = response.code()
                             val bodyText = response.body()?.toString() ?: response.errorBody()?.string() ?: ""
                             
-                            Log.d("DEBUG_IMAGE_SYNC", "UUID: ${img.uuid} | HTTP $httpCode | Body: $bodyText")
                             optimized?.delete()
 
                             if (httpCode == 201 || (httpCode == 200 && bodyText.contains("Imagen ya existía", true))) {
@@ -153,50 +155,64 @@ class ReporteWorker(
                                 seccionTotalmenteSubida = false
                                 huboFalloEnFotos = true
                             }
+                        } else {
+                            seccionTotalmenteSubida = false
                         }
                     }
                 }
 
                 if (seccionTotalmenteSubida) {
                     seccionesCompletadasOk.add(seccion.idSeccion)
-                    // Marcamos localmente como completada
-                    db.seccionDao().updateCompletada(seccion.idSeccion, true)
                 }
             }
 
-            // PASO 3: Confirmación Final
+            // PASO 3: Confirmación Final de Secciones
             if (seccionesCompletadasOk.isNotEmpty()) {
-                updateSyncProgress(idTareaLocal, -1, 90, "Finalizando secciones...")
+                updateSyncProgress(idTareaLocal, zonaActual, -1, 90, "Finalizando...")
                 val updateSectionsRequest = syncRequest.copy(
                     respuestas = emptyList(),
                     secciones_completadas = seccionesCompletadasOk
                 )
                 val finalResponse = api.crearTarea(updateSectionsRequest)
                 
-                if (finalResponse.isSuccessful && finalResponse.body()?.data?.estado_actual == "sincronizado") {
-                    limpiarTareaCompleta(idTareaLocal)
-                } else {
-                    // Si no se cerró la tarea global, volvemos a estado EN_PROCESO para permitir seguir trabajando en lo que falte
-                    db.tareaDao().getById(idTareaLocal)?.let {
-                        db.tareaDao().insert(it.copy(estado = EstadoTarea.EN_PROCESO))
+                if (finalResponse.isSuccessful) {
+                    // Marcamos como completadas permanentemente
+                    seccionesCompletadasOk.forEach { id ->
+                        db.seccionDao().updateCompletada(id, true)
+                        db.seccionDao().updateEnviando(id, false)
+                    }
+                    
+                    if (finalResponse.body()?.data?.estado_actual == "sincronizado") {
+                        limpiarTareaCompleta(idTareaLocal)
                     }
                 }
-            } else {
-                // Volver a habilitar si nada se envió
-                db.tareaDao().getById(idTareaLocal)?.let {
-                    db.tareaDao().insert(it.copy(estado = EstadoTarea.EN_PROCESO))
-                }
+            }
+
+            // Limpiamos el estado "enviando" de las que fallaron para que el usuario pueda reintentar
+            seccionesDeEstaZona.filter { !seccionesCompletadasOk.contains(it.idSeccion) }.forEach {
+                db.seccionDao().updateEnviando(it.idSeccion, false)
+            }
+            
+            // Volver la tarea a EN_PROCESO si no se cerró globalmente
+            val checkTarea = db.tareaDao().getById(idTareaLocal)
+            if (checkTarea != null) {
+                db.tareaDao().insert(checkTarea.copy(estado = EstadoTarea.EN_PROCESO))
             }
 
             if (huboFalloEnFotos) ListenableWorker.Result.retry() else ListenableWorker.Result.success()
 
         } catch (e: Exception) {
             Log.e("SYNC_ERROR", "Error: ${e.message}")
-            // En caso de error, desbloqueamos la tarea
-            db.tareaDao().getById(idTareaLocal)?.let {
-                db.tareaDao().insert(it.copy(estado = EstadoTarea.EN_PROCESO))
-            }
+            resetEstadoEnviando(idTareaLocal, zonaActual)
             ListenableWorker.Result.retry()
+        }
+    }
+
+    private suspend fun resetEstadoEnviando(tareaId: Long, zona: String) {
+        val tarea = db.tareaDao().getById(tareaId)
+        tarea?.let {
+            db.seccionDao().updateEnviandoPorZona(it.idFormulario, zona, false)
+            db.tareaDao().insert(it.copy(estado = EstadoTarea.EN_PROCESO))
         }
     }
 
@@ -228,11 +244,12 @@ class ReporteWorker(
         }
     }
 
-    private suspend fun updateSyncProgress(tareaId: Long, seccionId: Long, progress: Int, message: String) {
+    private suspend fun updateSyncProgress(tareaId: Long, zona: String, seccionId: Long, progress: Int, message: String) {
         setProgress(workDataOf(
             "PROGRESS" to progress, 
             "STATUS" to "UPLOADING",
             "TAREA_ID" to tareaId,
+            "ZONA_TRABAJADA" to zona,
             "SECCION_ID" to seccionId,
             "MESSAGE" to message
         ))
