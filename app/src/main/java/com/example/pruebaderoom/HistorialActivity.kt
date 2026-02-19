@@ -39,7 +39,6 @@ class HistorialActivity : AppCompatActivity() {
         
         findViewById<View>(R.id.btnVolverHistorial).setOnClickListener { finish() }
         
-        // BOTÓN PARA BORRAR TODO EL HISTORIAL
         findViewById<View>(R.id.btnBorrarHistorial).setOnClickListener {
             mostrarDialogoBorrar()
         }
@@ -76,7 +75,7 @@ class HistorialActivity : AppCompatActivity() {
             } else {
                 txtVacio.visibility = View.GONE
                 rvHistorial.visibility = View.VISIBLE
-                rvHistorial.adapter = HistorialAdapter(lista)
+                rvHistorial.adapter = HistorialAdapter(lista.sortedByDescending { it.fechaEnvio })
             }
         }
     }
@@ -85,24 +84,26 @@ class HistorialActivity : AppCompatActivity() {
         RecyclerView.Adapter<HistorialAdapter.VH>() {
         
         class VH(v: View) : RecyclerView.ViewHolder(v) {
-            val t1: TextView = v.findViewById(android.R.id.text1)
-            val t2: TextView = v.findViewById(android.R.id.text2)
+            val txtSitio: TextView = v.findViewById(R.id.txtHistorialSitio)
+            val txtForm: TextView = v.findViewById(R.id.txtHistorialForm)
+            val txtHora: TextView = v.findViewById(R.id.txtHistorialHora)
+            val txtFecha: TextView = v.findViewById(R.id.txtHistorialFecha)
         }
 
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int) = VH(
-            LayoutInflater.from(parent.context).inflate(android.R.layout.simple_list_item_2, parent, false)
+            LayoutInflater.from(parent.context).inflate(R.layout.item_historial, parent, false)
         )
 
         override fun onBindViewHolder(holder: VH, position: Int) {
             val item = lista[position]
-            val sdf = SimpleDateFormat("dd/MM/yyyy HH:mm:ss", Locale.getDefault())
             
-            holder.t1.text = "SITIO: ${item.sitioNombre}"
-            holder.t2.text = "Enviado: ${sdf.format(item.fechaEnvio)}\nFormulario: ${item.formularioNombre}"
+            val sdfHora = SimpleDateFormat("HH:mm:ss", Locale.getDefault())
+            val sdfFecha = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
             
-            holder.t1.setTextColor(android.graphics.Color.parseColor("#1E2A44"))
-            holder.t1.textSize = 16f
-            holder.t1.setTypeface(null, android.graphics.Typeface.BOLD)
+            holder.txtSitio.text = item.sitioNombre
+            holder.txtForm.text = item.formularioNombre
+            holder.txtHora.text = sdfHora.format(item.fechaEnvio)
+            holder.txtFecha.text = sdfFecha.format(item.fechaEnvio)
         }
 
         override fun getItemCount() = lista.size

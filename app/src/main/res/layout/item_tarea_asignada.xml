@@ -24,7 +24,7 @@
             <View
                 android:id="@+id/viewStatusIndicator"
                 android:layout_width="4dp"
-                android:layout_height="50dp"
+                android:layout_height="60dp"
                 android:background="@color/brand_blue"
                 android:layout_marginEnd="16dp"/>
 
@@ -73,7 +73,7 @@
                     android:textSize="14sp" />
 
                 <LinearLayout
-                    android:layout_width="wrap_content"
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
                     android:gravity="center_vertical"
@@ -90,7 +90,7 @@
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="4dp"
-                        android:text="20/05/2024"
+                        android:text="Cierre: 20/05/2024"
                         android:textColor="@color/brand_gray_text"
                         android:textSize="12sp" />
 
@@ -99,6 +99,16 @@
                         android:layout_height="10dp"
                         android:layout_marginHorizontal="8dp"
                         android:background="@color/brand_divider" />
+
+                    <TextView
+                        android:id="@+id/txtTiempoFaltante"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_weight="1"
+                        android:text="Faltan 2 días"
+                        android:textColor="#E53935"
+                        android:textSize="12sp"
+                        android:textStyle="bold" />
 
                     <TextView
                         android:id="@+id/txtTipoMaint"

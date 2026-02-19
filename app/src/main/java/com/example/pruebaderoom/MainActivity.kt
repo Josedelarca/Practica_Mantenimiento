@@ -37,6 +37,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 class MainActivity : AppCompatActivity() {
 
@@ -144,22 +145,13 @@ class MainActivity : AppCompatActivity() {
         lifecycleScope.launch {
             pbLoading.visibility = View.VISIBLE
             try {
-                Log.d("DEBUG_SYNC", "--- INICIANDO DESCARGA DE TAREAS ---")
                 val response = withContext(Dispatchers.IO) { RetrofitClient.instance.getTareasPendientes() }
-                
-                val jsonString = Gson().toJson(response)
-                Log.d("DEBUG_SYNC", "JSON RECIBIDO: $jsonString")
-
                 if (response.success) {
-                    Log.d("DEBUG_SYNC", "Tareas encontradas: ${response.data.size}")
                     guardarTareasEnBaseDeDatos(response.data)
                     cargarTareasLocales()
-                } else {
-                    Log.e("DEBUG_SYNC", "Respuesta API fallida")
                 }
             } catch (e: Exception) {
-                Log.e("DEBUG_SYNC", "ERROR CRÍTICO: ${e.message}")
-                e.printStackTrace()
+                Log.e("SYNC_TASKS", "Error: ${e.message}")
                 Toast.makeText(this@MainActivity, "Error al actualizar tareas", Toast.LENGTH_SHORT).show()
             } finally {
                 pbLoading.visibility = View.GONE
@@ -173,14 +165,11 @@ class MainActivity : AppCompatActivity() {
                 db.tareaDao().deleteByEstado(EstadoTarea.EN_PROCESO)
                 
                 listaApi.forEach { item ->
-                    Log.d("DEBUG_SYNC", "Guardando Tarea -> ID: ${item.id}, UUID: ${item.uuid}, Sitio: ${item.sitio.nombre}")
-                    
                     db.sitioDao().insert(item.sitio)
                     val apiForm = item.formulario
                     db.formularioDao().insert(Formulario(apiForm.id, apiForm.nombre, apiForm.descripcion))
                     
                     apiForm.secciones.forEach { apiSec ->
-                        // Verificamos si esta sección ya viene marcada como completada por la API
                         val completada = item.secciones_completadas.contains(apiSec.id)
                         db.seccionDao().insert(Seccion(apiSec.id, apiForm.id, apiSec.nombre, apiSec.zona, completada))
 
@@ -237,7 +226,10 @@ class MainActivity : AppCompatActivity() {
                         val sitio = db.sitioDao().getById(t.idSitio)
                         val form = db.formularioDao().getById(t.idFormulario)
                         TareaUIItem(t, sitio, form)
-                    }.toMutableList()
+                    }
+                    // ORDENAR: Primero las que vencen antes
+                    .sortedBy { it.tarea.fecha }
+                    .toMutableList()
                 }
                 adapter = TareaAdapter(items) { item ->
                     val intent = Intent(this@MainActivity, SeleccionFormularioActivity::class.java).apply {
@@ -302,6 +294,7 @@ class MainActivity : AppCompatActivity() {
             val txtTipo: TextView = v.findViewById(R.id.txtTipoMaint)
             val txtBadge: TextView = v.findViewById(R.id.txtBadgeEstado)
             val viewIndicator: View = v.findViewById(R.id.viewStatusIndicator)
+            val txtTiempoFaltante: TextView = v.findViewById(R.id.txtTiempoFaltante)
             
             val layoutProgress: View = v.findViewById(R.id.layoutSyncProgress)
             val pbSync: ProgressBar = v.findViewById(R.id.pbSyncTask)
@@ -316,9 +309,34 @@ class MainActivity : AppCompatActivity() {
             val item = lista[position]
             holder.txtSitio.text = item.sitio?.nombre ?: "Sitio ID: ${item.tarea.idSitio}"
             holder.txtForm.text = item.formulario?.nombre ?: "Formulario"
+            
             val sdf = SimpleDateFormat("dd/MM/yyyy", Locale.getDefault())
-            holder.txtFecha.text = "Fecha: ${sdf.format(item.tarea.fecha)}"
+            holder.txtFecha.text = "Cierre: ${sdf.format(item.tarea.fecha)}"
             holder.txtTipo.text = item.tarea.tipoMantenimiento.name
+
+            // CALCULO DE TIEMPO FALTANTE
+            val hoy = Calendar.getInstance().apply { set(Calendar.HOUR_OF_DAY, 0); set(Calendar.MINUTE, 0); set(Calendar.SECOND, 0); set(Calendar.MILLISECOND, 0) }.time
+            val diff = item.tarea.fecha.time - hoy.time
+            val dias = TimeUnit.MILLISECONDS.toDays(diff)
+
+            when {
+                dias < 0 -> {
+                    holder.txtTiempoFaltante.text = "VENCIDA"
+                    holder.txtTiempoFaltante.setTextColor(Color.parseColor("#B71C1C"))
+                }
+                dias == 0L -> {
+                    holder.txtTiempoFaltante.text = "VENCE HOY"
+                    holder.txtTiempoFaltante.setTextColor(Color.parseColor("#E65100"))
+                }
+                dias == 1L -> {
+                    holder.txtTiempoFaltante.text = "Falta 1 día"
+                    holder.txtTiempoFaltante.setTextColor(Color.parseColor("#EF6C00"))
+                }
+                else -> {
+                    holder.txtTiempoFaltante.text = "Faltan $dias días"
+                    holder.txtTiempoFaltante.setTextColor(if (dias <= 3) Color.parseColor("#F9A825") else Color.parseColor("#43A047"))
+                }
+            }
 
             // Lógica de Estado
             if (item.isSyncing) {
